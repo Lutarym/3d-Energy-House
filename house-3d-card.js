@@ -1,9 +1,53 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
 
+const LAYOUT = [
+  { name: 'Wohnzimmer',   pos: [-3, 1.5, -3], size: [5.6, 3, 5.6], floor: 'EG' },
+  { name: 'Kueche',       pos: [ 3, 1.5, -3], size: [5.6, 3, 5.6], floor: 'EG' },
+  { name: 'Schlafzimmer', pos: [-3, 1.5,  3], size: [5.6, 3, 5.6], floor: 'EG' },
+  { name: 'Bad',          pos: [ 3, 1.5,  3], size: [5.6, 3, 5.6], floor: 'EG' },
+  { name: 'Zimmer 1',     pos: [-3, 5.0, -2], size: [5.6, 3, 7.6], floor: 'OG' },
+  { name: 'Zimmer 2',     pos: [ 3, 5.0, -2], size: [5.6, 3, 7.6], floor: 'OG' },
+  { name: 'Flur OG',      pos: [ 0, 5.0,  3], size: [11.6, 3, 3.6], floor: 'OG' }
+];
+
+/* ============================ CARD ============================ */
+
 class House3DCard extends HTMLElement {
+
+  static getConfigElement() {
+    return document.createElement('house-3d-card-editor');
+  }
+
+  static getStubConfig() {
+    return {
+      type: 'custom:house-3d-card',
+      title: 'Raumtemperaturen',
+      opacity: 45,
+      rooms: LAYOUT.map((l) => ({ name: l.name, temp_entity: '' }))
+    };
+  }
+
   setConfig(config) {
     this.config = config || {};
     this._roomConfig = Array.isArray(this.config.rooms) ? this.config.rooms : [];
+
+    this.rooms = {};
+    LAYOUT.forEach((slot, i) => {
+      const cfg = this._roomConfig[i] || {};
+      const name = (cfg.name && String(cfg.name).trim()) || slot.name;
+      this.rooms[name] = {
+        pos: slot.pos,
+        size: slot.size,
+        floor: slot.floor,
+        tempEntity: cfg.temp_entity || null
+      };
+    });
+
+    if (this._built) {
+      this.renderRoomsList();
+      this.rebuildRooms();
+      this.updateTemperatures();
+    }
   }
 
   set hass(hass) {
@@ -26,32 +70,15 @@ class House3DCard extends HTMLElement {
     this.selectedRoom = null;
     this.temperatures = {};
     this.roomMeshes = {};
-    this.opacity = 0.45;
+    this.opacity = (this.config && typeof this.config.opacity === 'number')
+      ? this.config.opacity / 100
+      : 0.45;
 
-    const layout = [
-      { name: 'Wohnzimmer', pos: [-3, 1.5, -3], size: [5.6, 3, 5.6], floor: 'EG' },
-      { name: 'Kueche',     pos: [ 3, 1.5, -3], size: [5.6, 3, 5.6], floor: 'EG' },
-      { name: 'Schlafzimmer',pos:[-3, 1.5,  3], size: [5.6, 3, 5.6], floor: 'EG' },
-      { name: 'Bad',        pos: [ 3, 1.5,  3], size: [5.6, 3, 5.6], floor: 'EG' },
-      { name: 'Zimmer 1',   pos: [-3, 5.0, -2], size: [5.6, 3, 7.6], floor: 'OG' },
-      { name: 'Zimmer 2',   pos: [ 3, 5.0, -2], size: [5.6, 3, 7.6], floor: 'OG' },
-      { name: 'Flur OG',    pos: [ 0, 5.0,  3], size: [11.6, 3, 3.6], floor: 'OG' }
-    ];
-
-    this.rooms = {};
-    layout.forEach((slot, i) => {
-      const cfg = this._roomConfig[i] || {};
-      const name = cfg.name || slot.name;
-      this.rooms[name] = {
-        pos: slot.pos,
-        size: slot.size,
-        floor: cfg.floor || slot.floor,
-        tempEntity: cfg.temp_entity || null
-      };
-    });
+    const title = (this.config && this.config.title) ? this.config.title : '';
 
     this.innerHTML = `
       <ha-card style="overflow:hidden;">
+        ${title ? `<div style="padding:14px 16px 0;font-size:16px;font-weight:600;">${title}</div>` : ''}
         <div style="display:flex;height:600px;background:#12141a;font-family:var(--paper-font-body1_-_font-family,sans-serif);color:#fff;">
 
           <div style="width:250px;background:#0d0f14;border-right:1px solid #262a33;display:flex;flex-direction:column;overflow-y:auto;">
@@ -82,7 +109,7 @@ class House3DCard extends HTMLElement {
             </div>
             <div style="position:absolute;bottom:10px;left:10px;right:10px;display:flex;align-items:center;gap:10px;z-index:5;">
               <span style="font-size:11px;color:#7c8595;white-space:nowrap;">Transparenz</span>
-              <input id="opacity" type="range" min="10" max="100" value="45" style="flex:1;cursor:pointer;">
+              <input id="opacity" type="range" min="10" max="100" value="${Math.round(this.opacity * 100)}" style="flex:1;cursor:pointer;">
             </div>
           </div>
 
@@ -138,7 +165,7 @@ class House3DCard extends HTMLElement {
     if (!this._built || !this._hass) return;
 
     Object.entries(this.rooms).forEach(([name, data]) => {
-      if (!data.tempEntity) return;
+      if (!data.tempEntity) { this.temperatures[name] = undefined; return; }
       const st = this._hass.states[data.tempEntity];
       this.temperatures[name] = st ? st.state : undefined;
 
@@ -156,6 +183,7 @@ class House3DCard extends HTMLElement {
 
   renderRoomsList() {
     const list = this.querySelector('#rooms-list');
+    if (!list) return;
     list.innerHTML = '';
     Object.keys(this.rooms).forEach((name) => {
       const btn = document.createElement('button');
@@ -207,6 +235,7 @@ class House3DCard extends HTMLElement {
 
   updateInfoPanel(name) {
     const data = this.rooms[name];
+    if (!data) return;
     const raw = this.temperatures[name];
     const shown = (raw === undefined || raw === null || raw === '' || isNaN(parseFloat(raw))) ? '--' : parseFloat(raw).toFixed(1);
     const c = this.hex(this.tempColor(raw));
@@ -227,12 +256,56 @@ class House3DCard extends HTMLElement {
     `;
   }
 
+  rebuildRooms() {
+    if (!this._scene || !this.THREE) return;
+    const THREE = this.THREE;
+
+    Object.values(this.roomMeshes).forEach((m) => {
+      this._scene.remove(m);
+      m.geometry.dispose();
+      m.material.dispose();
+    });
+    this.roomMeshes = {};
+
+    Object.entries(this.rooms).forEach(([name, data]) => {
+      this._scene.add(this.makeRoom(THREE, name, data));
+    });
+    this.selectedRoom = null;
+  }
+
+  makeRoom(THREE, name, data) {
+    const geo = new THREE.BoxGeometry(...data.size);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x8892a0,
+      transparent: true,
+      opacity: this.opacity,
+      depthWrite: false,
+      roughness: 0.6,
+      metalness: 0.05
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(...data.pos);
+    mesh.userData.name = name;
+    mesh.renderOrder = 1;
+
+    const glow = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo),
+      new THREE.LineBasicMaterial({ color: 0x8892a0, transparent: true, opacity: 0.35 })
+    );
+    mesh.add(glow);
+    mesh.userData.glow = glow;
+
+    this.roomMeshes[name] = mesh;
+    return mesh;
+  }
+
   initThreeJS() {
     const THREE = this.THREE;
     const container = this.querySelector('#canvas-container');
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x12141a);
+    this._scene = scene;
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500);
     scene.add(new THREE.AmbientLight(0xffffff, 1.1));
@@ -240,56 +313,29 @@ class House3DCard extends HTMLElement {
     dir.position.set(18, 26, 14);
     scene.add(dir);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio || 1);
     container.appendChild(renderer.domElement);
     renderer.domElement.style.display = 'block';
 
     Object.entries(this.rooms).forEach(([name, data]) => {
-      const geo = new THREE.BoxGeometry(...data.size);
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x8892a0,
-        transparent: true,
-        opacity: this.opacity,
-        depthWrite: false,
-        roughness: 0.6,
-        metalness: 0.05
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(...data.pos);
-      mesh.userData.name = name;
-      mesh.renderOrder = 1;
-
-      const glow = new THREE.LineSegments(
-        new THREE.EdgesGeometry(geo),
-        new THREE.LineBasicMaterial({ color: 0x8892a0, transparent: true, opacity: 0.35 })
-      );
-      mesh.add(glow);
-      mesh.userData.glow = glow;
-
-      this.roomMeshes[name] = mesh;
-      scene.add(mesh);
+      scene.add(this.makeRoom(THREE, name, data));
     });
 
-    const grid = new THREE.GridHelper(30, 30, 0x2a303c, 0x1c212a);
-    grid.position.y = 0;
-    scene.add(grid);
+    scene.add(new THREE.GridHelper(30, 30, 0x2a303c, 0x1c212a));
 
-    // Kamera-Orbit
     const orbit = { theta: Math.PI * 0.25, phi: Math.PI * 0.32, radius: 26, target: new THREE.Vector3(0, 3.5, 0) };
     const applyCamera = () => {
-      const p = Math.max(0.15, Math.min(Math.PI / 2.05, orbit.phi));
-      orbit.phi = p;
+      orbit.phi = Math.max(0.15, Math.min(Math.PI / 2.05, orbit.phi));
       camera.position.set(
-        orbit.target.x + orbit.radius * Math.sin(p) * Math.sin(orbit.theta),
-        orbit.target.y + orbit.radius * Math.cos(p),
-        orbit.target.z + orbit.radius * Math.sin(p) * Math.cos(orbit.theta)
+        orbit.target.x + orbit.radius * Math.sin(orbit.phi) * Math.sin(orbit.theta),
+        orbit.target.y + orbit.radius * Math.cos(orbit.phi),
+        orbit.target.z + orbit.radius * Math.sin(orbit.phi) * Math.cos(orbit.theta)
       );
       camera.lookAt(orbit.target);
     };
     applyCamera();
 
-    // Maus
     let dragging = false, moved = false, lastX = 0, lastY = 0;
     const el = renderer.domElement;
 
@@ -383,12 +429,158 @@ class House3DCard extends HTMLElement {
 
 customElements.define('house-3d-card', House3DCard);
 
+/* ========================== EDITOR ========================== */
+
+class House3DCardEditor extends HTMLElement {
+
+  setConfig(config) {
+    this._config = JSON.parse(JSON.stringify(config || {}));
+    if (!Array.isArray(this._config.rooms)) {
+      this._config.rooms = LAYOUT.map((l) => ({ name: l.name, temp_entity: '' }));
+    }
+    while (this._config.rooms.length < LAYOUT.length) {
+      const i = this._config.rooms.length;
+      this._config.rooms.push({ name: LAYOUT[i].name, temp_entity: '' });
+    }
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  _fire() {
+    this.dispatchEvent(new CustomEvent('config-changed', {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
+  _render() {
+    if (!this._config || !this._hass) return;
+    if (this._rendered) { this._syncValues(); return; }
+    this._rendered = true;
+
+    this.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:16px;padding:8px 0;">
+
+        <ha-textfield id="title" label="Titel (optional)" style="width:100%;"></ha-textfield>
+
+        <div>
+          <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:4px;">Transparenz der Raeume</div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <input id="opacity" type="range" min="10" max="100" style="flex:1;">
+            <span id="opacity-val" style="width:44px;text-align:right;font-variant-numeric:tabular-nums;"></span>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-weight:600;margin-bottom:4px;">Erdgeschoss</div>
+          <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:8px;">Vier Raeume, im Uhrzeigersinn</div>
+          <div id="eg" style="display:flex;flex-direction:column;gap:12px;"></div>
+        </div>
+
+        <div>
+          <div style="font-weight:600;margin-bottom:4px;">Obergeschoss</div>
+          <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:8px;">Drei Raeume</div>
+          <div id="og" style="display:flex;flex-direction:column;gap:12px;"></div>
+        </div>
+
+      </div>
+    `;
+
+    const titleField = this.querySelector('#title');
+    titleField.addEventListener('input', (e) => {
+      const v = e.target.value.trim();
+      if (v) this._config.title = v; else delete this._config.title;
+      this._fire();
+    });
+
+    const opacity = this.querySelector('#opacity');
+    opacity.addEventListener('input', (e) => {
+      this._config.opacity = parseInt(e.target.value, 10);
+      this.querySelector('#opacity-val').textContent = this._config.opacity + ' %';
+      this._fire();
+    });
+
+    LAYOUT.forEach((slot, i) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'border:1px solid var(--divider-color);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;';
+
+      const label = document.createElement('div');
+      label.style.cssText = 'font-size:12px;color:var(--secondary-text-color);';
+      label.textContent = 'Position ' + (i + 1) + ': ' + slot.name;
+      wrap.appendChild(label);
+
+      const nameField = document.createElement('ha-textfield');
+      nameField.setAttribute('label', 'Bezeichnung');
+      nameField.style.width = '100%';
+      nameField.dataset.index = String(i);
+      nameField.className = 'room-name';
+      nameField.addEventListener('input', (e) => {
+        const v = e.target.value.trim();
+        this._config.rooms[i] = this._config.rooms[i] || {};
+        if (v) this._config.rooms[i].name = v; else delete this._config.rooms[i].name;
+        this._fire();
+      });
+      wrap.appendChild(nameField);
+
+      const picker = document.createElement('ha-selector');
+      picker.hass = this._hass;
+      picker.selector = { entity: { domain: ['sensor', 'climate', 'number', 'input_number'] } };
+      picker.label = 'Temperatur-Sensor';
+      picker.dataset.index = String(i);
+      picker.className = 'room-entity';
+      picker.addEventListener('value-changed', (e) => {
+        this._config.rooms[i] = this._config.rooms[i] || {};
+        this._config.rooms[i].temp_entity = e.detail.value || '';
+        this._fire();
+      });
+      wrap.appendChild(picker);
+
+      this.querySelector(slot.floor === 'EG' ? '#eg' : '#og').appendChild(wrap);
+    });
+
+    this._syncValues();
+  }
+
+  _syncValues() {
+    const titleField = this.querySelector('#title');
+    if (titleField) titleField.value = this._config.title || '';
+
+    const opacity = this.querySelector('#opacity');
+    if (opacity) {
+      const v = typeof this._config.opacity === 'number' ? this._config.opacity : 45;
+      opacity.value = v;
+      this.querySelector('#opacity-val').textContent = v + ' %';
+    }
+
+    this.querySelectorAll('.room-name').forEach((f) => {
+      const i = parseInt(f.dataset.index, 10);
+      f.value = (this._config.rooms[i] && this._config.rooms[i].name) || '';
+    });
+
+    this.querySelectorAll('.room-entity').forEach((p) => {
+      const i = parseInt(p.dataset.index, 10);
+      p.hass = this._hass;
+      p.value = (this._config.rooms[i] && this._config.rooms[i].temp_entity) || '';
+    });
+  }
+}
+
+customElements.define('house-3d-card-editor', House3DCardEditor);
+
+/* ========================== REGISTRY ========================== */
+
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'house-3d-card',
   name: '3D Energy House',
   description: 'Drehbare 3D-Uebersicht der Raumtemperaturen',
-  preview: false
+  preview: false,
+  documentationURL: 'https://github.com/Lutarym/3d-Energy-House'
 });
 
-console.info('%c 3D-ENERGY-HOUSE %c 1.1.0 ', 'background:#2f6bff;color:#fff;border-radius:3px 0 0 3px', 'background:#1c2029;color:#fff;border-radius:0 3px 3px 0');
+console.info('%c 3D-ENERGY-HOUSE %c 1.2.0 ', 'background:#2f6bff;color:#fff;border-radius:3px 0 0 3px', 'background:#1c2029;color:#fff;border-radius:0 3px 3px 0');

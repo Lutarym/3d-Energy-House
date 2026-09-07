@@ -35,6 +35,10 @@ frontend:
 
 ## Konfiguration
 
+Die Karte hat einen visuellen Editor. Im Dashboard auf Bearbeiten, dann Karte hinzufuegen, dann 3D Energy House waehlen. Fuer jeden Raum laesst sich dort per Auswahlfeld ein Temperatur-Sensor setzen.
+
+Alternativ per YAML:
+
 ```yaml
 type: custom:house-3d-card
 rooms:
