@@ -1,32 +1,29 @@
-# House 3D Card
+# 3D Energy House
 
-Eine interaktive 3D-Visualisierung deines Hauses für Home Assistant.
+Drehbare 3D-Uebersicht der Raumtemperaturen fuer Home Assistant.
 
 ## Features
 
-- 3D-Darstellung mit 4 Räumen Erdgeschoss und 3 Räumen Obergeschoss
-- Drehbare Kamera mit Buttons oder Maus
-- Räume-Liste zum Auswählen (klickbar)
-- Legende mit Farben
-- Info-Panel mit Raumdetails
-- Lichtkontrolle (An/Aus)
-- Helligkeitsregler
-- Temperaturanzeige
-- Echtzeit-3D-Rendering mit Three.js
-- Responsive Design
+- 4 Raeume Erdgeschoss, 3 Raeume Obergeschoss
+- Raeume sind durchsichtig, Innenraeume bleiben sichtbar
+- Transparenz per Schieberegler einstellbar
+- Drehen per Maus, per Button oder automatisch
+- Zoom per Mausrad
+- Farbe je nach Temperatur
+- Raum anklicken zeigt Details
 
-## Installation
+## Installation ueber HACS
 
-### HACS
-1. Gehe zu HACS
-2. Klicke auf Custom repositories
-3. Füge diese URL ein: `https://github.com/lutarym/house-3d-card`
-4. Wähle Category: Lovelace
+1. HACS oeffnen
+2. Custom repositories
+3. URL eintragen, Category: Dashboard
+4. Installieren
+5. Home Assistant neu starten
 
-### Manuell
-1. Lade die Datei `house-3d-card.js` herunter
-2. Speichere sie unter `/config/www/house-3d-card.js`
-3. Füge in `configuration.yaml` ein:
+## Manuelle Installation
+
+1. `house-3d-card.js` nach `/config/www/` kopieren
+2. In `configuration.yaml`:
 
 ```yaml
 frontend:
@@ -34,60 +31,53 @@ frontend:
     - /local/house-3d-card.js
 ```
 
-4. Starte Home Assistant neu
+3. Home Assistant neu starten
 
-## Verwendung
-
-Im Dashboard (YAML):
+## Konfiguration
 
 ```yaml
 type: custom:house-3d-card
 rooms:
   - name: Wohnzimmer
-    temp_entity: sensor.temp_wohnzimmer
-  - name: Küche
-    temp_entity: sensor.temp_kueche
+    temp_entity: sensor.DEINE_ENTITY
+  - name: Kueche
+    temp_entity: sensor.DEINE_ENTITY
   - name: Schlafzimmer
-    temp_entity: sensor.temp_schlafzimmer
+    temp_entity: sensor.DEINE_ENTITY
   - name: Bad
-    temp_entity: sensor.temp_bad
+    temp_entity: sensor.DEINE_ENTITY
   - name: Zimmer 1
-    temp_entity: sensor.temp_zimmer1
+    temp_entity: sensor.DEINE_ENTITY
   - name: Zimmer 2
-    temp_entity: sensor.temp_zimmer2
+    temp_entity: sensor.DEINE_ENTITY
   - name: Flur OG
-    temp_entity: sensor.temp_flur_og
+    temp_entity: sensor.DEINE_ENTITY
 ```
 
-Ersetze die Entity-Namen mit deinen tatsächlichen Sensoren.
+Die Reihenfolge bestimmt die Position im Haus. Die ersten vier Eintraege sind das Erdgeschoss, die letzten drei das Obergeschoss. `name` ist optional und ueberschreibt die Beschriftung.
+
+## Farbskala
+
+| Bereich | Farbe |
+|---|---|
+| bis 15 °C | blau |
+| 15 bis 18 °C | hellblau |
+| 18 bis 22 °C | gruen |
+| 22 bis 25 °C | gelb |
+| ab 25 °C | orange |
+| kein Wert | grau |
 
 ## Bedienung
 
-- **Buttons** (unten links): Ansicht drehen
-- **Maus**: Klicken und ziehen zum Rotieren
-
-## Räume
-
-### Erdgeschoss (4 Räume)
-- Wohnzimmer (rot)
-- Küche (türkis)
-- Schlafzimmer (gelb)
-- Bad (hellgrün)
-
-### Obergeschoss (3 Räume)
-- Zimmer 1 (grün)
-- Zimmer 2 (orange)
-- Flur OG (pink)
-
-## Anforderungen
-
-- Home Assistant 2024.1+
-- Modernes Browser mit WebGL-Unterstützung
+| Aktion | Wirkung |
+|---|---|
+| Ziehen mit Maus | drehen horizontal und vertikal |
+| Pfeil-Buttons | schrittweise drehen |
+| Auto | Dauerrotation an und aus |
+| Mausrad | zoomen |
+| Klick auf Raum | Raum auswaehlen |
+| Schieberegler | Transparenz |
 
 ## Lizenz
 
 MIT
-
-## Autor
-
-Lutarym
