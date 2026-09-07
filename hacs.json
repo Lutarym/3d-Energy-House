@@ -1,0 +1,7 @@
+{
+  "name": "3D Energy House",
+  "homeassistant": "2024.1.0",
+  "documentation": "https://github.com/Lutarym/3d-Energy-House",
+  "issues": "https://github.com/Lutarym/3d-Energy-House/issues",
+  "category": "lovelace"
+}
