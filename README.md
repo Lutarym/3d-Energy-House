@@ -51,7 +51,7 @@ Raumnamen sind freiwillig. Ohne Namen zeigt die Karte "Raum 1", "Raum 2" und so 
 
 ## Anbauten
 
-Der Knopf "+ Anbau" legt einen Raum direkt neben dem Hauptbaukoerper an. Er ist danach frei verschiebbar.
+Der Knopf "+ Anbau" legt einen Raum neben dem Hauptbaukoerper an. Gesucht wird eine freie Stelle, zuerst rechts, dann unten, links und oben. Neue Raeume und Anbauten werden nie deckungsgleich uebereinander abgelegt. Danach sind sie frei verschiebbar.
 
 Der gestrichelte Rahmen im Zeichenbereich markiert den Hauptbaukoerper. Die Flaeche ausserhalb gehoert zum Zeichenbereich dazu. Auch ein vorhandener Raum, den du dorthin ziehst, wird zum Anbau. Er liegt dann bei negativem `x` oder `z`, oder jenseits von Hausbreite und Haustiefe. Der Rand betraegt 30 Prozent der jeweiligen Hausseite, mindestens 2 m.
 

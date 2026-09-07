@@ -1,5 +1,5 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const VERSION = '2.2.1';
+const VERSION = '2.3.1';
 
 const ROOF_TYPES = [
   { value: 'flat',  label: 'Flachdach' },
@@ -43,6 +43,12 @@ const DEFAULT_CONFIG = () => ({
     { name: 'Erdgeschoss', height: 2.6, floorplan: '', rooms: [] }
   ]
 });
+
+function stableStringify(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+}
 
 function clampNum(v, min, max, fallback) {
   const n = parseFloat(v);
@@ -765,14 +771,9 @@ customElements.define('house-3d-card', House3DCard);
 class House3DCardEditor extends HTMLElement {
 
   setConfig(config) {
-    // Kommt die Aenderung von uns selbst, ist unser Zustand bereits aktuell.
-    // Ohne diese Sperre wuerde bei jedem Tastendruck der ganze Editor neu
-    // aufgebaut: Etage springt auf die erste, Textfelder verlieren den Fokus.
-    if (this._selfUpdate) { this._selfUpdate = false; return; }
-
     const base = DEFAULT_CONFIG();
     const c = JSON.parse(JSON.stringify(config || {}));
-    this._config = {
+    const next = {
       type: 'custom:house-3d-card',
       title: c.title || '',
       opacity: typeof c.opacity === 'number' ? c.opacity : 40,
@@ -788,10 +789,17 @@ class House3DCardEditor extends HTMLElement {
       },
       floors: (Array.isArray(c.floors) && c.floors.length) ? c.floors : base.floors
     };
-    this._config.floors.forEach((f) => {
+    next.floors.forEach((f) => {
       if (!Array.isArray(f.rooms)) f.rooms = [];
       f.rooms.forEach((r) => { if (!r.type) r.type = 'room'; });
     });
+
+    // Spielt Home Assistant nur unsere eigene Aenderung zurueck, aendert sich
+    // inhaltlich nichts. Dann bleibt die Oberflaeche unangetastet, sonst
+    // springt die Etage zurueck und Textfelder verlieren den Fokus.
+    if (this._config && stableStringify(next) === stableStringify(this._config)) return;
+
+    this._config = next;
 
     const maxFloor = this._config.floors.length - 1;
     if (typeof this._activeFloor !== 'number' || this._activeFloor > maxFloor) this._activeFloor = 0;
@@ -808,7 +816,6 @@ class House3DCardEditor extends HTMLElement {
   }
 
   _fire() {
-    this._selfUpdate = true;
     try {
       this.dispatchEvent(new CustomEvent('config-changed', {
         detail: { config: this._config },
@@ -816,7 +823,6 @@ class House3DCardEditor extends HTMLElement {
         composed: true
       }));
     } catch (e) {
-      this._selfUpdate = false;
       console.error('house-3d-card: Konfiguration konnte nicht uebergeben werden:', e);
     }
   }
@@ -912,18 +918,32 @@ class House3DCardEditor extends HTMLElement {
       this._fire();
     });
 
-    const numField = (id, apply) => {
-      this.querySelector(id).addEventListener('input', (e) => {
-        apply(parseFloat(e.target.value));
+    // Waehrend des Tippens nur grob absichern, erst beim Verlassen des Feldes
+    // auf den erlaubten Bereich klemmen. Sonst wird aus der ersten Ziffer von
+    // "15" sofort das Minimum und die Vorschau springt bei jedem Zeichen.
+    const numField = (id, min, max, fallback, set) => {
+      const el = this.querySelector(id);
+      if (!el) return;
+      el.addEventListener('input', (e) => {
+        const v = parseFloat(e.target.value);
+        if (isNaN(v)) return;
+        set(Math.min(max, Math.max(0.1, v)));
+        this._drawPlan();
+        this._fire();
+      });
+      el.addEventListener('change', (e) => {
+        const v = clampNum(e.target.value, min, max, fallback);
+        set(v);
+        e.target.value = v;
         this._drawPlan();
         this._fire();
       });
     };
 
-    numField('#f-width',   (v) => { this._config.house.width = clampNum(v, 3, 40, 12); });
-    numField('#f-depth',   (v) => { this._config.house.depth = clampNum(v, 3, 40, 10); });
-    numField('#f-roof-h',  (v) => { this._config.roof.height = clampNum(v, 0.2, 10, 3); });
-    numField('#f-roof-oh', (v) => { this._config.roof.overhang = clampNum(v, 0, 2, 0.4); });
+    numField('#f-width',   3,   40, 12,  (v) => { this._config.house.width = v; });
+    numField('#f-depth',   3,   40, 10,  (v) => { this._config.house.depth = v; });
+    numField('#f-roof-h',  0.2, 10, 3,   (v) => { this._config.roof.height = v; });
+    numField('#f-roof-oh', 0,   2,  0.4, (v) => { this._config.roof.overhang = v; });
 
     const roofBox = this.querySelector('#roof-types');
     ROOF_TYPES.forEach((rt) => {
@@ -975,7 +995,16 @@ class House3DCardEditor extends HTMLElement {
     });
 
     this.querySelector('#f-floor-h').addEventListener('input', (e) => {
-      this._config.floors[this._activeFloor].height = clampNum(e.target.value, 1.5, 6, 2.6);
+      const v = parseFloat(e.target.value);
+      if (isNaN(v)) return;
+      this._config.floors[this._activeFloor].height = Math.min(6, Math.max(0.5, v));
+      this._fire();
+    });
+
+    this.querySelector('#f-floor-h').addEventListener('change', (e) => {
+      const v = clampNum(e.target.value, 1.5, 6, 2.6);
+      this._config.floors[this._activeFloor].height = v;
+      e.target.value = v;
       this._fire();
     });
 
@@ -997,31 +1026,63 @@ class House3DCardEditor extends HTMLElement {
     this._refresh();
   }
 
+  _overlaps(rooms, x, z, w, d) {
+    return rooms.some((r) => x < r.x + r.w && x + w > r.x && z < r.z + r.d && z + d > r.z);
+  }
+
+  // Sucht eine freie Stelle im angegebenen Bereich. Gibt null zurueck, wenn alles belegt ist.
+  _findFreeSpot(rooms, w, d, x0, x1, z0, z1) {
+    const step = 0.5;
+    for (let z = z0; z <= z1 - d + 0.001; z += step) {
+      for (let x = x0; x <= x1 - w + 0.001; x += step) {
+        if (!this._overlaps(rooms, x, z, w, d)) return { x: round1(x), z: round1(z) };
+      }
+    }
+    return null;
+  }
+
   _addRoom(type) {
     const f = this._config.floors[this._activeFloor];
     const b = this._bounds();
-    let x = 0, z = 0, w = 3, d = 3;
+    const gap = 0.2;
+    let w = 3, d = 3, spot = null;
 
     if (type === 'annex') {
-      // Anbau rechts neben dem Hauptbaukoerper absetzen, vollstaendig im Zeichenbereich
-      const gap = 0.2;
-      w = round1(Math.max(1, Math.min(4, b.mx - gap)));
-      x = round1(b.W + gap);
-      z = round1(Math.min(2, Math.max(0, b.D - d)));
-    } else {
-      // freie Stelle im Hauptbaukoerper suchen
-      const step = 0.5;
-      outer:
-      for (let zz = 0; zz <= b.D - d; zz += step) {
-        for (let xx = 0; xx <= b.W - w; xx += step) {
-          const clash = f.rooms.some((r) =>
-            xx < r.x + r.w && xx + w > r.x && zz < r.z + r.d && zz + d > r.z);
-          if (!clash) { x = round1(xx); z = round1(zz); break outer; }
-        }
+      w = round1(Math.max(1, Math.min(3, b.mx - gap)));
+      d = round1(Math.max(1, Math.min(3, b.D)));
+      // Streifen rechts, unten, links, oben nacheinander absuchen
+      const strips = [
+        [b.W + gap, b.W + b.mx, 0, b.D],
+        [0, b.W, b.D + gap, b.D + b.mz],
+        [-b.mx, -gap, 0, b.D],
+        [0, b.W, -b.mz, -gap]
+      ];
+      for (const st of strips) {
+        spot = this._findFreeSpot(f.rooms, w, d, st[0], st[1], st[2], st[3]);
+        if (spot) break;
       }
+    } else {
+      spot = this._findFreeSpot(f.rooms, w, d, 0, b.W, 0, b.D);
     }
 
-    f.rooms.push({ name: '', type: type, x: x, z: z, w: w, d: d, temp_entity: '' });
+    // Ist alles belegt, versetzt anlegen statt deckungsgleich stapeln
+    if (!spot) {
+      const minX = type === 'annex' ? b.W + gap : 0;
+      const minZ = 0;
+      let off = 0.5;
+      let x = minX, z = minZ;
+      while (this._overlaps(f.rooms, x, z, w, d) && off < 30) {
+        x = round1(minX + off);
+        z = round1(minZ + off);
+        off += 0.5;
+      }
+      spot = {
+        x: round1(Math.max(-b.mx, Math.min(b.W + b.mx - w, x))),
+        z: round1(Math.max(-b.mz, Math.min(b.D + b.mz - d, z)))
+      };
+    }
+
+    f.rooms.push({ name: '', type: type, x: spot.x, z: spot.z, w: w, d: d, temp_entity: '' });
     this._selRoom = f.rooms.length - 1;
     this._buildRoomList();
     this._buildRoomEditor(true);
@@ -1441,8 +1502,18 @@ class House3DCardEditor extends HTMLElement {
       tf.dataset.key = f.key;
       tf.value = room[f.key];
       tf.addEventListener('input', (e) => {
-        room[f.key] = clampNum(e.target.value, f.min, 60, room[f.key]);
+        const v = parseFloat(e.target.value);
+        if (isNaN(v)) return;
+        room[f.key] = Math.min(60, Math.max(-60, v));
         this._drawPlan();
+        this._fire();
+      });
+      tf.addEventListener('change', (e) => {
+        const v = clampNum(e.target.value, f.min, 60, room[f.key]);
+        room[f.key] = v;
+        e.target.value = v;
+        this._drawPlan();
+        this._buildRoomList();
         this._fire();
       });
       grid.appendChild(tf);
