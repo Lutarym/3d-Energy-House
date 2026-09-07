@@ -1,5 +1,5 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const VERSION = '2.3.1';
+const VERSION = '2.5.0';
 
 const ROOF_TYPES = [
   { value: 'flat',  label: 'Flachdach' },
@@ -17,6 +17,7 @@ const ROOM_TYPES = [
   { value: 'utility', label: 'Wirtschaftsraum', color: 0x68806c },
   { value: 'storage', label: 'Abstellraum',     color: 0x6b6b78 },
   { value: 'garage',  label: 'Garage',          color: 0x565660 },
+  { value: 'carport', label: 'Carport',         color: 0x4f6470, open: true },
   { value: 'annex',   label: 'Anbau',           color: 0x7d6a8f }
 ];
 
@@ -28,6 +29,12 @@ function roomTypeColor(type) {
 function roomTypeLabel(type) {
   const t = ROOM_TYPES.find((r) => r.value === type);
   return t ? t.label : 'Wohnraum';
+}
+
+// Offene Bauteile wie der Carport haben keine geschlossenen Waende
+function roomTypeIsOpen(type) {
+  const t = ROOM_TYPES.find((r) => r.value === type);
+  return !!(t && t.open);
 }
 
 // Blickwinkel ueberlebt einen Neuaufbau der Karte im Editor
@@ -460,8 +467,9 @@ class House3DCard extends HTMLElement {
   applyOpacity() {
     this.roomMeshes.forEach((m) => {
       const sel = this.selected && m.userData.fi === this.selected.fi && m.userData.ri === this.selected.ri;
-      m.material.opacity = sel ? Math.min(1, this.opacity + 0.45) : this.opacity;
-      if (m.userData.glow) m.userData.glow.material.opacity = sel ? 1 : 0.4;
+      const base = m.userData.open ? this.opacity * 0.4 : this.opacity;
+      m.material.opacity = sel ? Math.min(1, base + 0.45) : base;
+      if (m.userData.glow) m.userData.glow.material.opacity = sel ? 1 : (m.userData.open ? 0.8 : 0.4);
     });
     if (this.roofMesh) this.roofMesh.material.opacity = Math.min(0.9, this.opacity + 0.15);
     this.slabMeshes.forEach((s) => { s.material.opacity = Math.min(1, this.opacity + 0.35); });
@@ -536,10 +544,11 @@ class House3DCard extends HTMLElement {
       // Raeume
       floor.rooms.forEach((room, ri) => {
         const geo = new THREE.BoxGeometry(room.w, floor.height, room.d);
+        const open = roomTypeIsOpen(room.type);
         const mat = new THREE.MeshStandardMaterial({
           color: roomTypeColor(room.type),
           transparent: true,
-          opacity: this.opacity,
+          opacity: open ? this.opacity * 0.4 : this.opacity,
           depthWrite: false,
           roughness: 0.65,
           metalness: 0.05
@@ -555,10 +564,11 @@ class House3DCard extends HTMLElement {
 
         const glow = new THREE.LineSegments(
           new THREE.EdgesGeometry(geo),
-          new THREE.LineBasicMaterial({ color: roomTypeColor(room.type), transparent: true, opacity: 0.4 })
+          new THREE.LineBasicMaterial({ color: roomTypeColor(room.type), transparent: true, opacity: open ? 0.8 : 0.4 })
         );
         mesh.add(glow);
         mesh.userData.glow = glow;
+        mesh.userData.open = open;
 
         group.add(mesh);
         this.roomMeshes.push(mesh);
@@ -811,14 +821,28 @@ class House3DCardEditor extends HTMLElement {
   }
 
   set hass(hass) {
+    const first = !this._hass;
     this._hass = hass;
-    this._render();
+
+    // Home Assistant setzt hass bei jeder Zustandsaenderung neu, oft mehrmals
+    // pro Sekunde. Wuerde hier neu gerendert, klappte jedes geoeffnete
+    // Dropdown sofort wieder zu und Textfelder verloeren den Fokus.
+    if (first) {
+      this._render();
+      return;
+    }
+    this.querySelectorAll('ha-selector').forEach((p) => { p.hass = hass; });
   }
 
   _fire() {
+    // Wichtig: eine eigenstaendige Kopie senden. Wuerde hier this._config
+    // selbst uebergeben, haette Home Assistant dieselbe Referenz, die der
+    // Editor danach weiter veraendert. Beim naechsten Senden vergliche
+    // Home Assistant das Objekt mit sich selbst, faende keinen Unterschied
+    // und verwuerfe die Aenderung. Nur die erste Aenderung kaeme an.
     try {
       this.dispatchEvent(new CustomEvent('config-changed', {
-        detail: { config: this._config },
+        detail: { config: JSON.parse(JSON.stringify(this._config)) },
         bubbles: true,
         composed: true
       }));
@@ -1209,7 +1233,7 @@ class House3DCardEditor extends HTMLElement {
 
     this._loadPlanImage();
     this._buildRoomList();
-    this._buildRoomEditor(true);
+    this._buildRoomEditor();
   }
 
   _loadPlanImage() {
