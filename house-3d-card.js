@@ -1,5 +1,5 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 const ROOF_TYPES = [
   { value: 'flat',  label: 'Flachdach' },
@@ -7,6 +7,31 @@ const ROOF_TYPES = [
   { value: 'hip',   label: 'Walmdach' },
   { value: 'mono',  label: 'Pultdach' }
 ];
+
+const ROOM_TYPES = [
+  { value: 'room',    label: 'Wohnraum',        color: 0x8892a0 },
+  { value: 'hall',    label: 'Flur',            color: 0x6f7e8a },
+  { value: 'stairs',  label: 'Treppenhaus',     color: 0xb0763f },
+  { value: 'bath',    label: 'Bad',             color: 0x5f8fa6 },
+  { value: 'kitchen', label: 'Kueche',          color: 0x8a7f6a },
+  { value: 'utility', label: 'Wirtschaftsraum', color: 0x68806c },
+  { value: 'storage', label: 'Abstellraum',     color: 0x6b6b78 },
+  { value: 'garage',  label: 'Garage',          color: 0x565660 },
+  { value: 'annex',   label: 'Anbau',           color: 0x7d6a8f }
+];
+
+function roomTypeColor(type) {
+  const t = ROOM_TYPES.find((r) => r.value === type);
+  return t ? t.color : 0x8892a0;
+}
+
+function roomTypeLabel(type) {
+  const t = ROOM_TYPES.find((r) => r.value === type);
+  return t ? t.label : 'Wohnraum';
+}
+
+// Blickwinkel ueberlebt einen Neuaufbau der Karte im Editor
+let LAST_VIEW = null;
 
 const DEFAULT_CONFIG = () => ({
   type: 'custom:house-3d-card',
@@ -150,10 +175,11 @@ class House3DCard extends HTMLElement {
         floorplan: f.floorplan || '',
         rooms: Array.isArray(f.rooms) ? f.rooms.map((r) => ({
           name: r.name || 'Raum',
-          x: clampNum(r.x, -40, 40, 0),
-          z: clampNum(r.z, -40, 40, 0),
-          w: clampNum(r.w, 0.5, 40, 3),
-          d: clampNum(r.d, 0.5, 40, 3),
+          type: r.type || 'room',
+          x: clampNum(r.x, -60, 60, 0),
+          z: clampNum(r.z, -60, 60, 0),
+          w: clampNum(r.w, 0.5, 60, 3),
+          d: clampNum(r.d, 0.5, 60, 3),
           temp_entity: r.temp_entity || ''
         })) : []
       })) : DEFAULT_CONFIG().floors
@@ -162,7 +188,6 @@ class House3DCard extends HTMLElement {
     this.opacity = this.config.opacity / 100;
 
     if (this._built) {
-      this.hiddenFloors = new Set();
       this.buildSidebar();
       this.rebuildScene();
       this.updateTemperatures();
@@ -377,7 +402,8 @@ class House3DCard extends HTMLElement {
 
         const mesh = this.roomMeshes.find((m) => m.userData.fi === fi && m.userData.ri === ri);
         if (mesh) {
-          const c = tempColorHex(val);
+          const hasVal = !(val === undefined || val === null || val === '' || isNaN(parseFloat(val)));
+          const c = hasVal ? tempColorHex(val) : roomTypeColor(room.type);
           mesh.material.color.setHex(c);
           if (mesh.userData.glow) mesh.userData.glow.material.color.setHex(c);
         }
@@ -416,7 +442,7 @@ class House3DCard extends HTMLElement {
 
     this.querySelector('#info-panel').innerHTML = `
       <div style="font-weight:600;font-size:14px;">${room.name}</div>
-      <div style="font-size:11px;color:#7c8595;margin-top:-6px;">${floor.name}</div>
+      <div style="font-size:11px;color:#7c8595;margin-top:-6px;">${floor.name} &middot; ${roomTypeLabel(room.type)}</div>
       <div style="background:#161a21;border:1px solid #262a33;border-radius:6px;padding:16px;text-align:center;">
         <div style="font-size:11px;color:#7c8595;margin-bottom:6px;">Temperatur</div>
         <div style="font-size:30px;font-weight:700;color:${c};line-height:1;">${fmtTemp(raw)}<span style="font-size:15px;">&deg;C</span></div>
@@ -473,7 +499,8 @@ class House3DCard extends HTMLElement {
     this.buildHouse(THREE);
     this.applyVisibility();
     this.applyOpacity();
-    this.frameCamera();
+    // Blickwinkel bleibt erhalten, nur bei ungueltigem Abstand neu setzen
+    if (!this._orbit || !this._orbit.radius) this.frameCamera();
   }
 
   buildHouse(THREE) {
@@ -519,7 +546,7 @@ class House3DCard extends HTMLElement {
       floor.rooms.forEach((room, ri) => {
         const geo = new THREE.BoxGeometry(room.w, floor.height, room.d);
         const mat = new THREE.MeshStandardMaterial({
-          color: 0x8892a0,
+          color: roomTypeColor(room.type),
           transparent: true,
           opacity: this.opacity,
           depthWrite: false,
@@ -537,7 +564,7 @@ class House3DCard extends HTMLElement {
 
         const glow = new THREE.LineSegments(
           new THREE.EdgesGeometry(geo),
-          new THREE.LineBasicMaterial({ color: 0x8892a0, transparent: true, opacity: 0.4 })
+          new THREE.LineBasicMaterial({ color: roomTypeColor(room.type), transparent: true, opacity: 0.4 })
         );
         mesh.add(glow);
         mesh.userData.glow = glow;
@@ -633,7 +660,9 @@ class House3DCard extends HTMLElement {
     this.slabMeshes = [];
     scene.add(new THREE.GridHelper(60, 60, 0x2a303c, 0x1c212a));
 
-    this._orbit = { theta: Math.PI * 0.25, phi: Math.PI * 0.34, radius: 30, target: new THREE.Vector3(0, 4, 0) };
+    this._orbit = LAST_VIEW
+      ? { theta: LAST_VIEW.theta, phi: LAST_VIEW.phi, radius: LAST_VIEW.radius, target: new THREE.Vector3(LAST_VIEW.tx, LAST_VIEW.ty, LAST_VIEW.tz) }
+      : { theta: Math.PI * 0.25, phi: Math.PI * 0.34, radius: 30, target: new THREE.Vector3(0, 4, 0) };
     this._applyCamera = () => {
       const o = this._orbit;
       o.phi = Math.max(0.12, Math.min(Math.PI / 2.02, o.phi));
@@ -643,12 +672,13 @@ class House3DCard extends HTMLElement {
         o.target.z + o.radius * Math.sin(o.phi) * Math.cos(o.theta)
       );
       camera.lookAt(o.target);
+      LAST_VIEW = { theta: o.theta, phi: o.phi, radius: o.radius, tx: o.target.x, ty: o.target.y, tz: o.target.z };
     };
 
     this.buildHouse(THREE);
     this.applyVisibility();
     this.applyOpacity();
-    this.frameCamera();
+    if (!LAST_VIEW) this.frameCamera(); else this._applyCamera();
 
     this._raycaster = new THREE.Raycaster();
     this._pointer = new THREE.Vector2();
@@ -750,6 +780,11 @@ customElements.define('house-3d-card', House3DCard);
 class House3DCardEditor extends HTMLElement {
 
   setConfig(config) {
+    // Kommt die Aenderung von uns selbst, ist unser Zustand bereits aktuell.
+    // Ohne diese Sperre wuerde bei jedem Tastendruck der ganze Editor neu
+    // aufgebaut: Etage springt auf die erste, Textfelder verlieren den Fokus.
+    if (this._selfUpdate) { this._selfUpdate = false; return; }
+
     const base = DEFAULT_CONFIG();
     const c = JSON.parse(JSON.stringify(config || {}));
     this._config = {
@@ -768,8 +803,17 @@ class House3DCardEditor extends HTMLElement {
       },
       floors: (Array.isArray(c.floors) && c.floors.length) ? c.floors : base.floors
     };
-    this._activeFloor = 0;
-    this._selRoom = null;
+    this._config.floors.forEach((f) => {
+      if (!Array.isArray(f.rooms)) f.rooms = [];
+      f.rooms.forEach((r) => { if (!r.type) r.type = 'room'; });
+    });
+
+    const maxFloor = this._config.floors.length - 1;
+    if (typeof this._activeFloor !== 'number' || this._activeFloor > maxFloor) this._activeFloor = 0;
+    const rooms = this._config.floors[this._activeFloor].rooms;
+    if (this._selRoom !== null && this._selRoom !== undefined && !rooms[this._selRoom]) this._selRoom = null;
+    if (this._selRoom === undefined) this._selRoom = null;
+
     this._render();
   }
 
@@ -779,6 +823,7 @@ class House3DCardEditor extends HTMLElement {
   }
 
   _fire() {
+    this._selfUpdate = true;
     this.dispatchEvent(new CustomEvent('config-changed', {
       detail: { config: this._config },
       bubbles: true,
@@ -905,6 +950,7 @@ class House3DCardEditor extends HTMLElement {
     this.querySelector('#floor-add').addEventListener('click', () => {
       if (this._config.floors.length >= 5) return;
       this._config.floors.push({ name: 'Etage ' + (this._config.floors.length + 1), height: 2.5, floorplan: '', rooms: [] });
+      this._selRoom = null;
       this._activeFloor = this._config.floors.length - 1;
       this._selRoom = null;
       this._refresh();
@@ -939,9 +985,10 @@ class House3DCardEditor extends HTMLElement {
 
     this.querySelector('#room-add').addEventListener('click', () => {
       const f = this._config.floors[this._activeFloor];
-      f.rooms.push({ name: 'Raum ' + (f.rooms.length + 1), x: 0, z: 0, w: 3, d: 3, temp_entity: '' });
+      f.rooms.push({ name: 'Raum ' + (f.rooms.length + 1), type: 'room', x: 0, z: 0, w: 3, d: 3, temp_entity: '' });
       this._selRoom = f.rooms.length - 1;
-      this._refresh();
+      this._buildRoomEditor(true);
+      this._drawPlan();
       this._fire();
     });
 
@@ -950,7 +997,8 @@ class House3DCardEditor extends HTMLElement {
       if (this._selRoom === null || !f.rooms[this._selRoom]) return;
       f.rooms.splice(this._selRoom, 1);
       this._selRoom = null;
-      this._refresh();
+      this._buildRoomEditor(true);
+      this._drawPlan();
       this._fire();
     });
 
@@ -1010,7 +1058,7 @@ class House3DCardEditor extends HTMLElement {
     this.querySelector('#f-plan').value = floor.floorplan || '';
 
     this._loadPlanImage();
-    this._buildRoomEditor();
+    this._buildRoomEditor(true);
   }
 
   _loadPlanImage() {
@@ -1026,19 +1074,21 @@ class House3DCardEditor extends HTMLElement {
     img.src = src;
   }
 
-  _canvasScale() {
-    const cv = this.querySelector('#plan-canvas');
-    return cv.clientWidth / this._config.house.width;
+  _bounds() {
+    const W = this._config.house.width;
+    const D = this._config.house.depth;
+    const mx = round1(Math.max(2, W * 0.3));
+    const mz = round1(Math.max(2, D * 0.3));
+    return { W, D, mx, mz, totalW: W + 2 * mx, totalD: D + 2 * mz };
   }
 
   _drawPlan() {
     const cv = this.querySelector('#plan-canvas');
     if (!cv) return;
 
-    const W = this._config.house.width;
-    const D = this._config.house.depth;
+    const b = this._bounds();
     const cssW = cv.clientWidth || 400;
-    const cssH = Math.max(120, cssW * (D / W));
+    const cssH = Math.max(140, cssW * (b.totalD / b.totalW));
 
     cv.style.height = cssH + 'px';
     const dpr = window.devicePixelRatio || 1;
@@ -1049,48 +1099,73 @@ class House3DCardEditor extends HTMLElement {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
 
-    const s = cssW / W;
+    const s = cssW / b.totalW;
+    const px = (x) => (x + b.mx) * s;
+    const pz = (z) => (z + b.mz) * s;
 
+    // Aussenbereich fuer Anbauten
+    ctx.fillStyle = '#15181f';
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    // Hausflaeche
+    const hx = px(0), hy = pz(0), hw = b.W * s, hh = b.D * s;
     if (this._planImg) {
-      ctx.globalAlpha = 1;
-      ctx.drawImage(this._planImg, 0, 0, cssW, cssH);
+      ctx.drawImage(this._planImg, hx, hy, hw, hh);
     } else {
       ctx.fillStyle = '#1b1f27';
-      ctx.fillRect(0, 0, cssW, cssH);
+      ctx.fillRect(hx, hy, hw, hh);
       ctx.strokeStyle = '#2a303c';
       ctx.lineWidth = 1;
-      for (let m = 1; m < W; m++) {
-        ctx.beginPath(); ctx.moveTo(m * s, 0); ctx.lineTo(m * s, cssH); ctx.stroke();
+      for (let m = 1; m < b.W; m++) {
+        ctx.beginPath(); ctx.moveTo(px(m), hy); ctx.lineTo(px(m), hy + hh); ctx.stroke();
       }
-      for (let m = 1; m < D; m++) {
-        ctx.beginPath(); ctx.moveTo(0, m * s); ctx.lineTo(cssW, m * s); ctx.stroke();
+      for (let m = 1; m < b.D; m++) {
+        ctx.beginPath(); ctx.moveTo(hx, pz(m)); ctx.lineTo(hx + hw, pz(m)); ctx.stroke();
       }
     }
+
+    // Umriss des Hauptbaukoerpers
+    ctx.strokeStyle = '#4a5568';
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(hx, hy, hw, hh);
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = '#5d6675';
+    ctx.font = '10px sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillText('Hauptbaukoerper, ausserhalb sind Anbauten moeglich', 4, 4);
 
     const floor = this._config.floors[this._activeFloor];
     floor.rooms.forEach((r, i) => {
       const sel = i === this._selRoom;
-      const x = r.x * s, y = r.z * s, w = r.w * s, h = r.d * s;
+      const x = px(r.x), y = pz(r.z), w = r.w * s, h = r.d * s;
+      const col = toCss(roomTypeColor(r.type));
 
-      ctx.fillStyle = sel ? 'rgba(47,107,255,0.35)' : 'rgba(120,140,170,0.22)';
+      ctx.globalAlpha = sel ? 0.55 : 0.35;
+      ctx.fillStyle = col;
       ctx.fillRect(x, y, w, h);
-      ctx.strokeStyle = sel ? '#2f6bff' : '#7c8595';
+      ctx.globalAlpha = 1;
+
+      ctx.strokeStyle = sel ? '#2f6bff' : col;
       ctx.lineWidth = sel ? 2 : 1;
       ctx.strokeRect(x, y, w, h);
 
-      ctx.fillStyle = '#fff';
-      ctx.font = '11px sans-serif';
-      ctx.textBaseline = 'top';
       ctx.save();
       ctx.beginPath();
       ctx.rect(x + 2, y + 2, Math.max(0, w - 4), Math.max(0, h - 4));
       ctx.clip();
+      ctx.fillStyle = '#fff';
+      ctx.font = '11px sans-serif';
       ctx.fillText(r.name, x + 4, y + 4);
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = '9px sans-serif';
+      ctx.fillText(r.w + ' x ' + r.d + ' m', x + 4, y + 17);
       ctx.restore();
 
       if (sel) {
         ctx.fillStyle = '#2f6bff';
-        ctx.fillRect(x + w - 10, y + h - 10, 10, 10);
+        ctx.fillRect(x + w - 11, y + h - 11, 11, 11);
       }
     });
   }
@@ -1101,8 +1176,14 @@ class House3DCardEditor extends HTMLElement {
 
     const toPlan = (e) => {
       const r = cv.getBoundingClientRect();
-      const s = r.width / this._config.house.width;
-      return { x: (e.clientX - r.left) / s, z: (e.clientY - r.top) / s, s };
+      const b = this._bounds();
+      const s = r.width / b.totalW;
+      return {
+        x: (e.clientX - r.left) / s - b.mx,
+        z: (e.clientY - r.top) / s - b.mz,
+        s: s,
+        b: b
+      };
     };
 
     cv.addEventListener('pointerdown', (e) => {
@@ -1118,29 +1199,29 @@ class House3DCardEditor extends HTMLElement {
         if (p.x >= r.x && p.x <= hx && p.z >= r.z && p.z <= hz) { hit = i; break; }
       }
 
-      if (hit === null) { this._selRoom = null; this._drawPlan(); this._buildRoomEditor(); return; }
+      if (hit === null) { this._selRoom = null; this._drawPlan(); this._buildRoomEditor(true); return; }
 
       this._selRoom = hit;
       mode = handle ? 'resize' : 'move';
       startX = p.x; startY = p.z;
       orig = Object.assign({}, floor.rooms[hit]);
-      cv.setPointerCapture(e.pointerId);
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       this._drawPlan();
-      this._buildRoomEditor();
+      this._buildRoomEditor(true);
     });
 
     cv.addEventListener('pointermove', (e) => {
       if (!mode || this._selRoom === null) return;
       const p = toPlan(e);
       const r = this._config.floors[this._activeFloor].rooms[this._selRoom];
-      const W = this._config.house.width, D = this._config.house.depth;
+      const b = p.b;
 
       if (mode === 'move') {
-        r.x = round1(Math.max(0, Math.min(W - orig.w, orig.x + (p.x - startX))));
-        r.z = round1(Math.max(0, Math.min(D - orig.d, orig.z + (p.z - startY))));
+        r.x = round1(Math.max(-b.mx, Math.min(b.W + b.mx - orig.w, orig.x + (p.x - startX))));
+        r.z = round1(Math.max(-b.mz, Math.min(b.D + b.mz - orig.d, orig.z + (p.z - startY))));
       } else {
-        r.w = round1(Math.max(0.5, Math.min(W - r.x, orig.w + (p.x - startX))));
-        r.d = round1(Math.max(0.5, Math.min(D - r.z, orig.d + (p.z - startY))));
+        r.w = round1(Math.max(0.5, Math.min(b.W + b.mx - r.x, orig.w + (p.x - startX))));
+        r.d = round1(Math.max(0.5, Math.min(b.D + b.mz - r.z, orig.d + (p.z - startY))));
       }
       this._drawPlan();
       this._syncRoomFields();
@@ -1161,14 +1242,21 @@ class House3DCardEditor extends HTMLElement {
     }
   }
 
-  _buildRoomEditor() {
+  _buildRoomEditor(force) {
     const box = this.querySelector('#room-editor');
     const floor = this._config.floors[this._activeFloor];
 
     if (this._selRoom === null || !floor.rooms[this._selRoom]) {
       box.innerHTML = '<div style="font-size:12px;color:var(--secondary-text-color);">Kein Raum ausgewaehlt. Auf ein Rechteck klicken oder Raum hinzufuegen.</div>';
+      this._editorKey = null;
       return;
     }
+
+    // Felder nur neu aufbauen, wenn ein anderer Raum gewaehlt wurde.
+    // Sonst verliert das Namensfeld beim Tippen den Fokus.
+    const key = this._activeFloor + ':' + this._selRoom;
+    if (!force && this._editorKey === key) { this._syncRoomFields(); return; }
+    this._editorKey = key;
 
     const room = floor.rooms[this._selRoom];
     box.innerHTML = '';
@@ -1176,18 +1264,40 @@ class House3DCardEditor extends HTMLElement {
     const nameF = document.createElement('ha-textfield');
     nameF.setAttribute('label', 'Raumname');
     nameF.style.width = '100%';
+    nameF.id = 'room-name-field';
     nameF.value = room.name || '';
     nameF.addEventListener('input', (e) => {
       room.name = e.target.value;
       this._drawPlan();
+      this._buildFloorTabs();
       this._fire();
     });
     box.appendChild(nameF);
 
+    const typeWrap = document.createElement('div');
+    typeWrap.innerHTML = '<div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Raumtyp</div>';
+    const sel = document.createElement('select');
+    sel.id = 'room-type-field';
+    sel.style.cssText = 'width:100%;padding:10px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);font-size:14px;';
+    ROOM_TYPES.forEach((rt) => {
+      const opt = document.createElement('option');
+      opt.value = rt.value;
+      opt.textContent = rt.label;
+      sel.appendChild(opt);
+    });
+    sel.value = room.type || 'room';
+    sel.addEventListener('change', (e) => {
+      room.type = e.target.value;
+      this._drawPlan();
+      this._fire();
+    });
+    typeWrap.appendChild(sel);
+    box.appendChild(typeWrap);
+
     const picker = document.createElement('ha-selector');
     picker.hass = this._hass;
     picker.selector = { entity: { domain: ['sensor', 'climate', 'number', 'input_number'] } };
-    picker.label = 'Temperatur-Sensor';
+    picker.label = 'Temperatur-Sensor (optional)';
     picker.value = room.temp_entity || '';
     picker.addEventListener('value-changed', (e) => {
       room.temp_entity = e.detail.value || '';
@@ -1198,10 +1308,10 @@ class House3DCardEditor extends HTMLElement {
     const grid = document.createElement('div');
     grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px;';
     const fields = [
-      { key: 'x', label: 'Position X in m' },
-      { key: 'z', label: 'Position Z in m' },
-      { key: 'w', label: 'Breite in m' },
-      { key: 'd', label: 'Tiefe in m' }
+      { key: 'x', label: 'Position X in m', min: -60 },
+      { key: 'z', label: 'Position Z in m', min: -60 },
+      { key: 'w', label: 'Breite in m',      min: 0.5 },
+      { key: 'd', label: 'Tiefe in m',       min: 0.5 }
     ];
     fields.forEach((f) => {
       const tf = document.createElement('ha-textfield');
@@ -1211,20 +1321,44 @@ class House3DCardEditor extends HTMLElement {
       tf.dataset.key = f.key;
       tf.value = room[f.key];
       tf.addEventListener('input', (e) => {
-        room[f.key] = clampNum(e.target.value, f.key === 'w' || f.key === 'd' ? 0.5 : 0, 40, room[f.key]);
+        room[f.key] = clampNum(e.target.value, f.min, 60, room[f.key]);
         this._drawPlan();
         this._fire();
       });
       grid.appendChild(tf);
     });
     box.appendChild(grid);
+
+    const dup = document.createElement('button');
+    dup.textContent = 'Raum duplizieren';
+    dup.style.cssText = 'padding:8px;border-radius:6px;cursor:pointer;border:1px solid var(--divider-color);background:transparent;color:var(--primary-text-color);';
+    dup.addEventListener('click', () => {
+      const copy = Object.assign({}, room);
+      copy.name = room.name + ' Kopie';
+      copy.x = round1(Math.min(room.x + 1, 60));
+      copy.z = round1(Math.min(room.z + 1, 60));
+      floor.rooms.push(copy);
+      this._selRoom = floor.rooms.length - 1;
+      this._buildRoomEditor(true);
+      this._drawPlan();
+      this._fire();
+    });
+    box.appendChild(dup);
   }
 
   _syncRoomFields() {
     const floor = this._config.floors[this._activeFloor];
     if (this._selRoom === null || !floor.rooms[this._selRoom]) return;
     const room = floor.rooms[this._selRoom];
+
+    const nameF = this.querySelector('#room-name-field');
+    if (nameF && document.activeElement !== nameF) nameF.value = room.name || '';
+
+    const typeF = this.querySelector('#room-type-field');
+    if (typeF && document.activeElement !== typeF) typeF.value = room.type || 'room';
+
     this.querySelectorAll('.room-num').forEach((tf) => {
+      if (document.activeElement === tf) return;
       tf.value = room[tf.dataset.key];
     });
   }

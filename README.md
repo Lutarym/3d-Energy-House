@@ -5,6 +5,8 @@ Drehbare 3D-Darstellung eines Einfamilienhauses fuer Home Assistant, mit Etagen,
 ## Features
 
 - 1 bis 5 Etagen, frei benennbar
+- Anbauten: Raeume duerfen ausserhalb des Hauptbaukoerpers liegen
+- Raumtypen wie Treppenhaus, Wirtschaftsraum, Abstellraum, Garage
 - Vier Dachformen: Flachdach, Satteldach, Walmdach, Pultdach
 - Grundriss-Bild als Vorlage, Raeume werden per Maus darauf aufgezogen
 - Etagen und Dach einzeln ausblendbar
@@ -42,6 +44,28 @@ frontend:
 4. Raeume mit dem Knopf "Raum" hinzufuegen und auf dem Bild an die richtige Stelle ziehen
 
 Im Zeichenbereich gilt: Rechteck ziehen verschiebt den Raum, die blaue Ecke unten rechts skaliert ihn. Werte lassen sich darunter auch exakt eintippen.
+
+## Anbauten
+
+Der gestrichelte Rahmen im Zeichenbereich markiert den Hauptbaukoerper. Die Flaeche ausserhalb gehoert zum Zeichenbereich dazu. Ein Raum, den du dorthin ziehst, wird als Anbau dargestellt. Er liegt dann bei negativem `x` oder `z`, oder jenseits von Hausbreite und Haustiefe. Der Rand betraegt 30 Prozent der jeweiligen Hausseite, mindestens 2 m.
+
+Das Dach deckt nur den Hauptbaukoerper ab. Ein eigenes Dach fuer den Anbau gibt es nicht.
+
+## Raumtypen
+
+Raeume ohne Temperatursensor werden in der Farbe ihres Typs dargestellt, statt einheitlich grau. Sobald ein Sensor hinterlegt ist, gilt die Temperaturfarbe.
+
+| Typ | Verwendung |
+|---|---|
+| Wohnraum | Standard |
+| Flur | Verkehrsflaeche |
+| Treppenhaus | Treppe, meist ohne Sensor |
+| Bad | Nassbereich |
+| Kueche | Kueche |
+| Wirtschaftsraum | Hauswirtschaft, Technik |
+| Abstellraum | Lager |
+| Garage | Garage, Carport |
+| Anbau | Wintergarten, Anbau |
 
 ## Koordinatensystem
 
@@ -109,7 +133,8 @@ floors:
 | `floors[].name` | Text | Etage | Bezeichnung |
 | `floors[].height` | 1.5 bis 6 | 2.6 | Geschosshoehe in m |
 | `floors[].floorplan` | Pfad | leer | Grundriss-Bild |
-| `rooms[].x` `.z` | Zahl | 0 | Position der linken oberen Ecke in m |
+| `rooms[].type` | siehe Raumtypen | room | Raumtyp, bestimmt die Farbe ohne Sensor |
+| `rooms[].x` `.z` | Zahl | 0 | Position der linken oberen Ecke in m, negativ fuer Anbauten |
 | `rooms[].w` `.d` | Zahl | 3 | Breite und Tiefe in m |
 | `rooms[].temp_entity` | Entity | leer | Temperaturquelle |
 
@@ -138,6 +163,8 @@ Bei `climate`-Entities wird das Attribut `current_temperature` verwendet, sonst 
 | Klick auf einen Raum | Raum auswaehlen |
 | Haken links | Etage oder Dach ausblenden |
 | Schieberegler unten | Transparenz |
+
+Blickwinkel und Zoom bleiben erhalten, wenn du im Editor etwas aenderst.
 
 ## Hinweis
 
