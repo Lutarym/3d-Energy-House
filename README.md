@@ -59,7 +59,14 @@ Das Dach deckt nur den Hauptbaukoerper ab. Ein eigenes Dach fuer den Anbau gibt 
 
 ## Raumtypen
 
-Raeume ohne Temperatursensor werden in der Farbe ihres Typs dargestellt, statt einheitlich grau. Sobald ein Sensor hinterlegt ist, gilt die Temperaturfarbe.
+Der Raumtyp ist ein freies Textfeld. Die folgenden Typen werden als Vorschlag
+angeboten und bringen eine passende Farbe mit, du kannst aber jede beliebige
+Bezeichnung eintragen, etwa Hobbyraum oder Sauna.
+
+Raeume ohne Temperatursensor werden in der Farbe ihres Typs dargestellt, statt
+einheitlich grau. Fuer eigene Typen oder wenn dir die Vorgabe nicht gefaellt,
+laesst sich je Raum eine eigene Farbe waehlen. Sobald ein Sensor hinterlegt ist,
+gilt die Temperaturfarbe.
 
 | Typ | Verwendung |
 |---|---|
@@ -70,7 +77,8 @@ Raeume ohne Temperatursensor werden in der Farbe ihres Typs dargestellt, statt e
 | Kueche | Kueche |
 | Wirtschaftsraum | Hauswirtschaft, Technik |
 | Abstellraum | Lager |
-| Garage | Garage, Carport |
+| Garage | geschlossene Garage |
+| Carport | offener Unterstand, wird durchscheinender dargestellt |
 | Anbau | Wintergarten, Anbau |
 
 ## Koordinatensystem
@@ -140,7 +148,8 @@ floors:
 | `floors[].height` | 1.5 bis 6 | 2.6 | Geschosshoehe in m |
 | `floors[].floorplan` | Pfad | leer | Grundriss-Bild |
 | `rooms[].name` | Text | leer | Optional. Leer bedeutet automatische Nummerierung in der Anzeige |
-| `rooms[].type` | siehe Raumtypen | room | Raumtyp, bestimmt die Farbe ohne Sensor |
+| `rooms[].type` | freier Text | room | Raumtyp, bestimmt die Farbe ohne Sensor |
+| `rooms[].color` | #rrggbb | leer | Eigene Farbe, hat Vorrang vor der Typfarbe |
 | `rooms[].x` `.z` | Zahl | 0 | Position der linken oberen Ecke in m, negativ fuer Anbauten |
 | `rooms[].w` `.d` | Zahl | 3 | Breite und Tiefe in m |
 | `rooms[].temp_entity` | Entity | leer | Temperaturquelle |
@@ -174,6 +183,11 @@ Bei `climate`-Entities wird das Attribut `current_temperature` verwendet, sonst 
 Blickwinkel und Zoom bleiben erhalten, wenn du im Editor etwas aenderst.
 
 ## Hinweis
+
+Der Editor verwendet ausschliesslich eigene Eingabefelder und ist nicht darauf
+angewiesen, dass interne Elemente von Home Assistant wie `ha-textfield` bereits
+geladen sind. Ist `ha-selector` verfuegbar, wird die gewohnte Entitaetsauswahl
+angeboten, sonst ein Textfeld mit Vorschlagsliste aller Temperaturquellen.
 
 Die Karte laedt Three.js zur Laufzeit von `unpkg.com`. Ohne Internetzugang im Browser erscheint eine Fehlermeldung im Kartenbereich.
 

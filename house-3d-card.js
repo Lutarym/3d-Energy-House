@@ -1,5 +1,5 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const VERSION = '2.5.0';
+const VERSION = '2.7.0';
 
 const ROOF_TYPES = [
   { value: 'flat',  label: 'Flachdach' },
@@ -22,18 +22,28 @@ const ROOM_TYPES = [
 ];
 
 function roomTypeColor(type) {
-  const t = ROOM_TYPES.find((r) => r.value === type);
+  const t = ROOM_TYPES.find((r) => r.value === type || r.label === type);
   return t ? t.color : 0x8892a0;
 }
 
+// Farbe eines Raumes: eigene Farbe hat Vorrang, sonst die des bekannten Typs
+function roomColor(room) {
+  if (room && typeof room.color === 'string' && /^#[0-9a-f]{6}$/i.test(room.color)) {
+    return parseInt(room.color.slice(1), 16);
+  }
+  return roomTypeColor(room && room.type);
+}
+
 function roomTypeLabel(type) {
-  const t = ROOM_TYPES.find((r) => r.value === type);
-  return t ? t.label : 'Wohnraum';
+  const t = ROOM_TYPES.find((r) => r.value === type || r.label === type);
+  if (t) return t.label;
+  const own = (type || '').trim();
+  return own !== '' ? own : 'Wohnraum';
 }
 
 // Offene Bauteile wie der Carport haben keine geschlossenen Waende
 function roomTypeIsOpen(type) {
-  const t = ROOM_TYPES.find((r) => r.value === type);
+  const t = ROOM_TYPES.find((r) => r.value === type || r.label === type);
   return !!(t && t.open);
 }
 
@@ -55,6 +65,37 @@ function stableStringify(v) {
   if (v === null || typeof v !== 'object') return JSON.stringify(v);
   if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
   return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+}
+
+// Eigene Eingabefelder statt ha-textfield. Interne Elemente von Home Assistant
+// sind nur registriert, wenn zuvor ein eingebauter Editor sie geladen hat.
+// Ist das nicht der Fall, bleibt das Feld eine leere Huelle ohne Funktion.
+const INPUT_CSS =
+  'width:100%;box-sizing:border-box;padding:10px;border-radius:6px;font-size:14px;' +
+  'font-family:inherit;border:1px solid var(--divider-color,#c4c4c4);' +
+  'background:var(--card-background-color,#fff);color:var(--primary-text-color,#212121);';
+
+const LABEL_CSS =
+  'display:block;font-size:12px;margin-bottom:4px;color:var(--secondary-text-color,#727272);';
+
+function fieldHtml(id, label, type, extra) {
+  return '<label style="' + LABEL_CSS + '" for="' + id + '">' + label + '</label>' +
+         '<input id="' + id + '" type="' + (type || 'text') + '" ' + (extra || '') +
+         ' style="' + INPUT_CSS + '">';
+}
+
+function makeField(label, type) {
+  const wrap = document.createElement('div');
+  const lab = document.createElement('label');
+  lab.style.cssText = LABEL_CSS;
+  lab.textContent = label;
+  const input = document.createElement('input');
+  input.type = type || 'text';
+  input.style.cssText = INPUT_CSS;
+  wrap.appendChild(lab);
+  wrap.appendChild(input);
+  wrap.input = input;
+  return wrap;
 }
 
 function clampNum(v, min, max, fallback) {
@@ -173,7 +214,8 @@ class House3DCard extends HTMLElement {
         floorplan: f.floorplan || '',
         rooms: Array.isArray(f.rooms) ? f.rooms.map((r) => ({
           name: typeof r.name === 'string' ? r.name : '',
-          type: r.type || 'room',
+          type: typeof r.type === 'string' && r.type.trim() !== '' ? r.type : 'room',
+          color: (typeof r.color === 'string' && /^#[0-9a-f]{6}$/i.test(r.color)) ? r.color : undefined,
           x: clampNum(r.x, -60, 60, 0),
           z: clampNum(r.z, -60, 60, 0),
           w: clampNum(r.w, 0.5, 60, 3),
@@ -401,7 +443,7 @@ class House3DCard extends HTMLElement {
         const mesh = this.roomMeshes.find((m) => m.userData.fi === fi && m.userData.ri === ri);
         if (mesh) {
           const hasVal = !(val === undefined || val === null || val === '' || isNaN(parseFloat(val)));
-          const c = hasVal ? tempColorHex(val) : roomTypeColor(room.type);
+          const c = hasVal ? tempColorHex(val) : roomColor(room);
           mesh.material.color.setHex(c);
           if (mesh.userData.glow) mesh.userData.glow.material.color.setHex(c);
         }
@@ -546,7 +588,7 @@ class House3DCard extends HTMLElement {
         const geo = new THREE.BoxGeometry(room.w, floor.height, room.d);
         const open = roomTypeIsOpen(room.type);
         const mat = new THREE.MeshStandardMaterial({
-          color: roomTypeColor(room.type),
+          color: roomColor(room),
           transparent: true,
           opacity: open ? this.opacity * 0.4 : this.opacity,
           depthWrite: false,
@@ -564,7 +606,7 @@ class House3DCard extends HTMLElement {
 
         const glow = new THREE.LineSegments(
           new THREE.EdgesGeometry(geo),
-          new THREE.LineBasicMaterial({ color: roomTypeColor(room.type), transparent: true, opacity: open ? 0.8 : 0.4 })
+          new THREE.LineBasicMaterial({ color: roomColor(room), transparent: true, opacity: open ? 0.8 : 0.4 })
         );
         mesh.add(glow);
         mesh.userData.glow = glow;
@@ -783,7 +825,11 @@ class House3DCardEditor extends HTMLElement {
   setConfig(config) {
     const base = DEFAULT_CONFIG();
     const c = JSON.parse(JSON.stringify(config || {}));
+    // Alles Unbekannte unveraendert uebernehmen. Home Assistant legt hier
+    // eigene Angaben ab, etwa grid_options fuer die Kartengroesse oder
+    // visibility. Wuerden sie beim Zurueckgeben fehlen, waeren sie geloescht.
     const next = {
+      ...c,
       type: 'custom:house-3d-card',
       title: c.title || '',
       opacity: typeof c.opacity === 'number' ? c.opacity : 40,
@@ -864,11 +910,11 @@ class House3DCardEditor extends HTMLElement {
           <span>Steht hier eine aeltere Nummer, laedt der Browser noch die alte Datei.</span>
         </div>
 
-        <ha-textfield id="f-title" label="Titel (optional)" style="width:100%;"></ha-textfield>
+        <div>${fieldHtml('f-title', 'Titel (optional)', 'text')}</div>
 
         <div style="display:flex;gap:12px;">
-          <ha-textfield id="f-width" type="number" label="Hausbreite in m" style="flex:1;"></ha-textfield>
-          <ha-textfield id="f-depth" type="number" label="Haustiefe in m" style="flex:1;"></ha-textfield>
+          <div style="flex:1;">${fieldHtml('f-width', 'Hausbreite in m', 'number', 'step="0.1" min="3" max="40"')}</div>
+          <div style="flex:1;">${fieldHtml('f-depth', 'Haustiefe in m', 'number', 'step="0.1" min="3" max="40"')}</div>
         </div>
 
         <div style="border:1px solid var(--divider-color);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:12px;">
@@ -878,8 +924,8 @@ class House3DCardEditor extends HTMLElement {
             <div id="roof-types" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
           </div>
           <div style="display:flex;gap:12px;">
-            <ha-textfield id="f-roof-h"  type="number" label="Dachhoehe in m" style="flex:1;"></ha-textfield>
-            <ha-textfield id="f-roof-oh" type="number" label="Ueberstand in m" style="flex:1;"></ha-textfield>
+            <div style="flex:1;">${fieldHtml('f-roof-h', 'Dachhoehe in m', 'number', 'step="0.1" min="0.2" max="10"')}</div>
+            <div style="flex:1;">${fieldHtml('f-roof-oh', 'Ueberstand in m', 'number', 'step="0.1" min="0" max="2"')}</div>
           </div>
           <div id="ridge-row">
             <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Firstrichtung</div>
@@ -901,11 +947,11 @@ class House3DCardEditor extends HTMLElement {
           <div id="floor-tabs" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
 
           <div style="display:flex;gap:12px;">
-            <ha-textfield id="f-floor-name" label="Bezeichnung" style="flex:2;"></ha-textfield>
-            <ha-textfield id="f-floor-h" type="number" label="Hoehe in m" style="flex:1;"></ha-textfield>
+            <div style="flex:2;">${fieldHtml('f-floor-name', 'Bezeichnung', 'text')}</div>
+            <div style="flex:1;">${fieldHtml('f-floor-h', 'Hoehe in m', 'number', 'step="0.1" min="1.5" max="6"')}</div>
           </div>
 
-          <ha-textfield id="f-plan" label="Grundriss-Bild, z.B. /local/grundriss_eg.png" style="width:100%;"></ha-textfield>
+          <div>${fieldHtml('f-plan', 'Grundriss-Bild, z.B. /local/grundriss_eg.png', 'text')}</div>
           <div style="font-size:11px;color:var(--secondary-text-color);margin-top:-6px;">
             Bild nach /config/www/ legen und hier als /local/dateiname.png eintragen.
           </div>
@@ -1126,6 +1172,24 @@ class House3DCardEditor extends HTMLElement {
     this._fire();
   }
 
+  _entityDatalist() {
+    const dl = document.createElement('datalist');
+    dl.id = 'house3d-entities';
+    const states = (this._hass && this._hass.states) || {};
+    Object.keys(states)
+      .filter((id) => /^(sensor|climate|number|input_number)\./.test(id))
+      .sort()
+      .slice(0, 500)
+      .forEach((id) => {
+        const o = document.createElement('option');
+        o.value = id;
+        const fn = states[id].attributes && states[id].attributes.friendly_name;
+        if (fn) o.label = fn;
+        dl.appendChild(o);
+      });
+    return dl;
+  }
+
   _buildRoomList() {
     const box = this.querySelector('#room-list');
     if (!box) return;
@@ -1145,7 +1209,7 @@ class House3DCardEditor extends HTMLElement {
         (active ? 'rgba(127,127,127,0.12)' : 'transparent') + ';';
 
       const swatch = document.createElement('span');
-      swatch.style.cssText = 'width:12px;height:12px;border-radius:3px;flex-shrink:0;background:' + toCss(roomTypeColor(r.type)) + ';';
+      swatch.style.cssText = 'width:12px;height:12px;border-radius:3px;flex-shrink:0;background:' + toCss(roomColor(r)) + ';';
       row.appendChild(swatch);
 
       const label = document.createElement('button');
@@ -1201,11 +1265,15 @@ class House3DCardEditor extends HTMLElement {
   _refresh() {
     if (!this._rendered) return;
 
-    this.querySelector('#f-title').value = this._config.title || '';
-    this.querySelector('#f-width').value = this._config.house.width;
-    this.querySelector('#f-depth').value = this._config.house.depth;
-    this.querySelector('#f-roof-h').value = this._config.roof.height;
-    this.querySelector('#f-roof-oh').value = this._config.roof.overhang;
+    const setField = (id, val) => {
+      const el = this.querySelector(id);
+      if (el && document.activeElement !== el) el.value = val;
+    };
+    setField('#f-title', this._config.title || '');
+    setField('#f-width', this._config.house.width);
+    setField('#f-depth', this._config.house.depth);
+    setField('#f-roof-h', this._config.roof.height);
+    setField('#f-roof-oh', this._config.roof.overhang);
 
     this.querySelectorAll('.roof-btn').forEach((b) => {
       const active = b.dataset.type === this._config.roof.type;
@@ -1227,9 +1295,9 @@ class House3DCardEditor extends HTMLElement {
     this._buildFloorTabs();
 
     const floor = this._config.floors[this._activeFloor];
-    this.querySelector('#f-floor-name').value = floor.name || '';
-    this.querySelector('#f-floor-h').value = floor.height;
-    this.querySelector('#f-plan').value = floor.floorplan || '';
+    setField('#f-floor-name', floor.name || '');
+    setField('#f-floor-h', floor.height);
+    setField('#f-plan', floor.floorplan || '');
 
     this._loadPlanImage();
     this._buildRoomList();
@@ -1315,7 +1383,7 @@ class House3DCardEditor extends HTMLElement {
     floor.rooms.forEach((r, i) => {
       const sel = i === this._selRoom;
       const x = px(r.x), y = pz(r.z), w = r.w * s, h = r.d * s;
-      const col = toCss(roomTypeColor(r.type));
+      const col = toCss(roomColor(r));
 
       ctx.globalAlpha = sel ? 0.55 : 0.35;
       ctx.fillStyle = col;
@@ -1465,9 +1533,8 @@ class House3DCardEditor extends HTMLElement {
     const room = floor.rooms[this._selRoom];
     box.innerHTML = '';
 
-    const nameF = document.createElement('ha-textfield');
-    nameF.setAttribute('label', 'Raumname (optional)');
-    nameF.style.width = '100%';
+    const nameWrap = makeField('Raumname (optional)', 'text');
+    const nameF = nameWrap.input;
     nameF.id = 'room-name-field';
     nameF.value = room.name || '';
     nameF.addEventListener('input', (e) => {
@@ -1476,39 +1543,92 @@ class House3DCardEditor extends HTMLElement {
       this._buildRoomList();
       this._fire();
     });
-    box.appendChild(nameF);
+    box.appendChild(nameWrap);
 
-    const typeWrap = document.createElement('div');
-    typeWrap.innerHTML = '<div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Raumtyp</div>';
-    const sel = document.createElement('select');
-    sel.id = 'room-type-field';
-    sel.style.cssText = 'width:100%;padding:10px;border-radius:6px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);font-size:14px;';
-    ROOM_TYPES.forEach((rt) => {
-      const opt = document.createElement('option');
-      opt.value = rt.value;
-      opt.textContent = rt.label;
-      sel.appendChild(opt);
-    });
-    sel.value = room.type || 'room';
-    sel.addEventListener('change', (e) => {
+    // Raumtyp frei eingebbar, die bekannten Typen dienen nur als Vorschlag
+    const typeWrap = makeField('Raumtyp (frei waehlbar)', 'text');
+    const typeF = typeWrap.input;
+    typeF.id = 'room-type-field';
+    typeF.setAttribute('list', 'house3d-roomtypes');
+    typeF.setAttribute('placeholder', 'z.B. Hobbyraum');
+    typeF.value = roomTypeLabel(room.type) === 'Wohnraum' && !room.type ? '' : (room.type || '');
+    typeF.addEventListener('input', (e) => {
       room.type = e.target.value;
+      this._drawPlan();
+      this._buildRoomList();
+      this._syncColorField();
+      this._fire();
+    });
+
+    const dl = document.createElement('datalist');
+    dl.id = 'house3d-roomtypes';
+    ROOM_TYPES.forEach((rt) => {
+      const o = document.createElement('option');
+      o.value = rt.label;
+      dl.appendChild(o);
+    });
+    typeWrap.appendChild(dl);
+    box.appendChild(typeWrap);
+
+    // Eigene Farbe, greift wenn kein Sensor hinterlegt ist
+    const colorRow = document.createElement('div');
+    colorRow.style.cssText = 'display:flex;align-items:flex-end;gap:10px;';
+
+    const colorWrap = makeField('Farbe ohne Sensor', 'color');
+    const colorF = colorWrap.input;
+    colorF.id = 'room-color-field';
+    colorF.style.cssText = INPUT_CSS + 'padding:4px;height:42px;cursor:pointer;';
+    colorF.value = room.color || toCss(roomTypeColor(room.type));
+    colorF.addEventListener('input', (e) => {
+      room.color = e.target.value;
       this._drawPlan();
       this._buildRoomList();
       this._fire();
     });
-    typeWrap.appendChild(sel);
-    box.appendChild(typeWrap);
+    colorWrap.style.flex = '1';
+    colorRow.appendChild(colorWrap);
 
-    const picker = document.createElement('ha-selector');
-    picker.hass = this._hass;
-    picker.selector = { entity: { domain: ['sensor', 'climate', 'number', 'input_number'] } };
-    picker.label = 'Temperatur-Sensor (optional)';
-    picker.value = room.temp_entity || '';
-    picker.addEventListener('value-changed', (e) => {
-      room.temp_entity = e.detail.value || '';
+    const resetColor = document.createElement('button');
+    resetColor.type = 'button';
+    resetColor.textContent = 'Farbe des Typs';
+    resetColor.style.cssText = 'padding:10px;border-radius:6px;cursor:pointer;border:1px solid var(--divider-color,#c4c4c4);background:transparent;color:var(--primary-text-color,#212121);font-family:inherit;white-space:nowrap;';
+    resetColor.addEventListener('click', () => {
+      delete room.color;
+      this._syncColorField();
+      this._drawPlan();
+      this._buildRoomList();
       this._fire();
     });
-    box.appendChild(picker);
+    colorRow.appendChild(resetColor);
+    box.appendChild(colorRow);
+
+    // ha-selector nur verwenden, wenn es tatsaechlich registriert ist,
+    // sonst ein eigenes Feld mit Vorschlagsliste
+    if (window.customElements && window.customElements.get('ha-selector')) {
+      const picker = document.createElement('ha-selector');
+      picker.hass = this._hass;
+      picker.selector = { entity: { domain: ['sensor', 'climate', 'number', 'input_number'] } };
+      picker.label = 'Temperatur-Sensor (optional)';
+      picker.value = room.temp_entity || '';
+      picker.addEventListener('value-changed', (e) => {
+        room.temp_entity = e.detail.value || '';
+        this._fire();
+      });
+      box.appendChild(picker);
+    } else {
+      const entWrap = makeField('Temperatur-Sensor (optional)', 'text');
+      const entF = entWrap.input;
+      entF.id = 'room-entity-field';
+      entF.value = room.temp_entity || '';
+      entF.setAttribute('list', 'house3d-entities');
+      entF.setAttribute('placeholder', 'sensor.beispiel_temperatur');
+      entF.addEventListener('input', (e) => {
+        room.temp_entity = e.target.value.trim();
+        this._fire();
+      });
+      entWrap.appendChild(this._entityDatalist());
+      box.appendChild(entWrap);
+    }
 
     const grid = document.createElement('div');
     grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px;';
@@ -1519,9 +1639,9 @@ class House3DCardEditor extends HTMLElement {
       { key: 'd', label: 'Tiefe in m',       min: 0.5 }
     ];
     fields.forEach((f) => {
-      const tf = document.createElement('ha-textfield');
-      tf.setAttribute('type', 'number');
-      tf.setAttribute('label', f.label);
+      const wrap = makeField(f.label, 'number');
+      const tf = wrap.input;
+      tf.step = '0.1';
       tf.className = 'room-num';
       tf.dataset.key = f.key;
       tf.value = room[f.key];
@@ -1540,7 +1660,7 @@ class House3DCardEditor extends HTMLElement {
         this._buildRoomList();
         this._fire();
       });
-      grid.appendChild(tf);
+      grid.appendChild(wrap);
     });
     box.appendChild(grid);
 
@@ -1562,6 +1682,14 @@ class House3DCardEditor extends HTMLElement {
     box.appendChild(dup);
   }
 
+  _syncColorField() {
+    const floor = this._config.floors[this._activeFloor];
+    if (this._selRoom === null || !floor.rooms[this._selRoom]) return;
+    const room = floor.rooms[this._selRoom];
+    const cf = this.querySelector('#room-color-field');
+    if (cf) cf.value = room.color || toCss(roomTypeColor(room.type));
+  }
+
   _syncRoomFields() {
     const floor = this._config.floors[this._activeFloor];
     if (this._selRoom === null || !floor.rooms[this._selRoom]) return;
@@ -1571,7 +1699,13 @@ class House3DCardEditor extends HTMLElement {
     if (nameF && document.activeElement !== nameF) nameF.value = room.name || '';
 
     const typeF = this.querySelector('#room-type-field');
-    if (typeF && document.activeElement !== typeF) typeF.value = room.type || 'room';
+    if (typeF && document.activeElement !== typeF) typeF.value = room.type || '';
+
+    const colorF = this.querySelector('#room-color-field');
+    if (colorF && document.activeElement !== colorF) colorF.value = room.color || toCss(roomTypeColor(room.type));
+
+    const entF = this.querySelector('#room-entity-field');
+    if (entF && document.activeElement !== entF) entF.value = room.temp_entity || '';
 
     this.querySelectorAll('.room-num').forEach((tf) => {
       if (document.activeElement === tf) return;
