@@ -1,5 +1,5 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const VERSION = '2.2.0';
+const VERSION = '2.2.1';
 
 const ROOF_TYPES = [
   { value: 'flat',  label: 'Flachdach' },
@@ -809,11 +809,16 @@ class House3DCardEditor extends HTMLElement {
 
   _fire() {
     this._selfUpdate = true;
-    this.dispatchEvent(new CustomEvent('config-changed', {
-      detail: { config: this._config },
-      bubbles: true,
-      composed: true
-    }));
+    try {
+      this.dispatchEvent(new CustomEvent('config-changed', {
+        detail: { config: this._config },
+        bubbles: true,
+        composed: true
+      }));
+    } catch (e) {
+      this._selfUpdate = false;
+      console.error('house-3d-card: Konfiguration konnte nicht uebergeben werden:', e);
+    }
   }
 
   _render() {
@@ -823,6 +828,11 @@ class House3DCardEditor extends HTMLElement {
 
     this.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:18px;padding:8px 0;">
+
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--secondary-text-color);">
+          <span style="background:#2f6bff;color:#fff;border-radius:4px;padding:2px 7px;font-weight:600;">3D Energy House ${VERSION}</span>
+          <span>Steht hier eine aeltere Nummer, laedt der Browser noch die alte Datei.</span>
+        </div>
 
         <ha-textfield id="f-title" label="Titel (optional)" style="width:100%;"></ha-textfield>
 
