@@ -138,13 +138,29 @@ class House3DCard extends HTMLElement {
         window.__three_module = await import(THREE_URL);
       }
       this.THREE = window.__three_module;
+    } catch (e) {
+      this.showError('Three.js konnte nicht geladen werden: ' + e.message);
+      return;
+    }
+
+    try {
       this.querySelector('#status').style.display = 'none';
       this.initThreeJS();
       this.updateTemperatures();
     } catch (e) {
-      this.querySelector('#status').textContent = 'Three.js konnte nicht geladen werden';
-      console.error('house-3d-card:', e);
+      this.showError('3D-Aufbau fehlgeschlagen: ' + e.message);
     }
+  }
+
+  showError(msg) {
+    console.error('house-3d-card:', msg);
+    const s = this.querySelector('#status');
+    if (!s) return;
+    s.style.display = 'flex';
+    s.style.padding = '16px';
+    s.style.textAlign = 'center';
+    s.style.color = '#e8582c';
+    s.textContent = msg;
   }
 
   tempColor(value) {
@@ -373,6 +389,21 @@ class House3DCard extends HTMLElement {
       applyCamera();
     }, { passive: false });
 
+    // Fallback fuer Browser ohne Pointer-Events
+    if (!window.PointerEvent) {
+      el.addEventListener('mousedown', (e) => { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; });
+      window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - lastX, dy = e.clientY - lastY;
+        if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        orbit.theta -= dx * 0.006;
+        orbit.phi   -= dy * 0.006;
+        lastX = e.clientX; lastY = e.clientY;
+        applyCamera();
+      });
+      window.addEventListener('mouseup', () => { dragging = false; });
+    }
+
     el.style.cursor = 'grab';
     el.style.touchAction = 'none';
 
@@ -401,7 +432,7 @@ class House3DCard extends HTMLElement {
       if (!w || !h) return;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(w, h, false);
+      renderer.setSize(w, h);
     };
     resize();
     this._resizeObserver = new ResizeObserver(resize);
@@ -583,4 +614,4 @@ window.customCards.push({
   documentationURL: 'https://github.com/Lutarym/3d-Energy-House'
 });
 
-console.info('%c 3D-ENERGY-HOUSE %c 1.2.0 ', 'background:#2f6bff;color:#fff;border-radius:3px 0 0 3px', 'background:#1c2029;color:#fff;border-radius:0 3px 3px 0');
+console.info('%c 3D-ENERGY-HOUSE %c 1.3.0 ', 'background:#2f6bff;color:#fff;border-radius:3px 0 0 3px', 'background:#1c2029;color:#fff;border-radius:0 3px 3px 0');
