@@ -11,6 +11,7 @@ Drehbare 3D-Darstellung eines Einfamilienhauses fuer Home Assistant, mit Etagen,
 - Grundriss-Bild als Vorlage, Raeume werden per Maus darauf aufgezogen
 - Etagen und Dach einzeln ausblendbar
 - Raeume nach Temperatur eingefaerbt
+- Beschriftung mit Raumname und Temperatur direkt im 3D-Modell, abschaltbar
 - Drehen per Maus, per Button oder automatisch, Zoom per Mausrad
 - Transparenz stufenlos einstellbar
 - Vollstaendiger visueller Editor
@@ -177,7 +178,7 @@ Bei `climate`-Entities wird das Attribut `current_temperature` verwendet, sonst 
 | Reset | Ansicht zuruecksetzen |
 | Mausrad | zoomen |
 | Klick auf einen Raum | Raum auswaehlen |
-| Haken links | Etage oder Dach ausblenden |
+| Haken links | Etage, Dach oder Beschriftung ausblenden |
 | Schieberegler unten | Transparenz |
 
 Blickwinkel und Zoom bleiben erhalten, wenn du im Editor etwas aenderst.

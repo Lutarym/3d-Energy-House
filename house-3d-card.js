@@ -1,5 +1,5 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const VERSION = '2.7.0';
+const VERSION = '2.8.0';
 
 const ROOF_TYPES = [
   { value: 'flat',  label: 'Flachdach' },
@@ -181,6 +181,40 @@ function buildRoofGeometry(THREE, type, W, D, H) {
   return geo;
 }
 
+// Beschriftung als Bildtextur fuer ein Sprite, das immer zur Kamera zeigt
+function makeLabelTexture(THREE, name, temp) {
+  const cv = document.createElement('canvas');
+  const W = 512, H = temp ? 200 : 128;
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const drawText = (text, y, size) => {
+    ctx.font = '700 ' + size + 'px sans-serif';
+    ctx.lineWidth = Math.round(size / 5);
+    ctx.strokeStyle = 'rgba(10,12,16,0.85)';
+    ctx.lineJoin = 'round';
+    ctx.strokeText(text, W / 2, y);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(text, W / 2, y);
+  };
+
+  if (temp) {
+    drawText(name, 62, 60);
+    drawText(temp, 145, 70);
+  } else {
+    drawText(name, H / 2, 64);
+  }
+
+  const tex = new THREE.CanvasTexture(cv);
+  if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return { texture: tex, aspect: W / H };
+}
+
 /* ========================== CARD ========================== */
 
 class House3DCard extends HTMLElement {
@@ -257,6 +291,8 @@ class House3DCard extends HTMLElement {
     this.roomMeshes = [];
     this.hiddenFloors = new Set();
     this.roofHidden = false;
+    this.labels = [];
+    this.labelsVisible = true;
 
     this.innerHTML = `
       <ha-card style="overflow:hidden;">
@@ -370,6 +406,11 @@ class House3DCard extends HTMLElement {
       this.applyVisibility();
     }));
 
+    toggles.appendChild(this.makeToggle('Beschriftung', this.labelsVisible, (on) => {
+      this.labelsVisible = on;
+      this.applyVisibility();
+    }));
+
     this.buildRoomsList();
   }
 
@@ -440,6 +481,9 @@ class House3DCard extends HTMLElement {
         }
         this.temps[key] = val;
 
+        const label = this.labels.find((l) => l.userData.fi === fi && l.userData.ri === ri);
+        if (label) this.updateLabel(label, displayName(room, ri), this.labelTemp(fi, ri));
+
         const mesh = this.roomMeshes.find((m) => m.userData.fi === fi && m.userData.ri === ri);
         if (mesh) {
           const hasVal = !(val === undefined || val === null || val === '' || isNaN(parseFloat(val)));
@@ -504,6 +548,7 @@ class House3DCard extends HTMLElement {
   applyVisibility() {
     this.floorGroups.forEach((g, i) => { g.visible = !this.hiddenFloors.has(i); });
     if (this.roofGroup) this.roofGroup.visible = !this.roofHidden;
+    this.labels.forEach((l) => { l.visible = this.labelsVisible; });
   }
 
   applyOpacity() {
@@ -525,7 +570,10 @@ class House3DCard extends HTMLElement {
       if (!g) return;
       g.traverse((o) => {
         if (o.geometry) o.geometry.dispose();
-        if (o.material) o.material.dispose();
+        if (o.material) {
+          if (o.material.map) o.material.map.dispose();
+          o.material.dispose();
+        }
       });
       this._scene.remove(g);
     });
@@ -533,6 +581,7 @@ class House3DCard extends HTMLElement {
     this.floorGroups = [];
     this.roomMeshes = [];
     this.slabMeshes = [];
+    this.labels = [];
     this.roofGroup = null;
     this.roofMesh = null;
     this.selected = null;
@@ -614,6 +663,15 @@ class House3DCard extends HTMLElement {
 
         group.add(mesh);
         this.roomMeshes.push(mesh);
+
+        // Beschriftung mittig im Raum
+        const label = this.makeLabel(THREE, displayName(room, ri), this.labelTemp(fi, ri));
+        label.position.copy(mesh.position);
+        label.userData.fi = fi;
+        label.userData.ri = ri;
+        label.visible = this.labelsVisible;
+        group.add(label);
+        this.labels.push(label);
       });
 
       this._scene.add(group);
@@ -663,6 +721,40 @@ class House3DCard extends HTMLElement {
     this.roofMesh = roofMesh;
   }
 
+  labelTemp(fi, ri) {
+    const raw = this.temps[this.tempKey(fi, ri)];
+    if (raw === undefined || raw === null || raw === '' || isNaN(parseFloat(raw))) return null;
+    return fmtTemp(raw) + ' \u00b0C';
+  }
+
+  makeLabel(THREE, name, temp) {
+    const made = makeLabelTexture(THREE, name, temp);
+    const mat = new THREE.SpriteMaterial({
+      map: made.texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false
+    });
+    const sprite = new THREE.Sprite(mat);
+    const h = temp ? 1.4 : 0.95;
+    sprite.scale.set(h * made.aspect, h, 1);
+    sprite.renderOrder = 20;
+    sprite.userData = { text: name + '|' + (temp || ''), isLabel: true };
+    return sprite;
+  }
+
+  updateLabel(label, name, temp) {
+    const key = name + '|' + (temp || '');
+    if (label.userData.text === key) return;
+    const made = makeLabelTexture(this.THREE, name, temp);
+    if (label.material.map) label.material.map.dispose();
+    label.material.map = made.texture;
+    label.material.needsUpdate = true;
+    const h = temp ? 1.4 : 0.95;
+    label.scale.set(h * made.aspect, h, 1);
+    label.userData.text = key;
+  }
+
   frameCamera() {
     if (!this._orbit) return;
     const W = this.config.house.width;
@@ -701,6 +793,7 @@ class House3DCard extends HTMLElement {
     el.style.touchAction = 'none';
 
     this.slabMeshes = [];
+    this.labels = [];
     scene.add(new THREE.GridHelper(60, 60, 0x2a303c, 0x1c212a));
 
     this._orbit = LAST_VIEW
@@ -810,7 +903,7 @@ class House3DCard extends HTMLElement {
     this._pointer.x = ((event.clientX - r.left) / r.width) * 2 - 1;
     this._pointer.y = -((event.clientY - r.top) / r.height) * 2 + 1;
     this._raycaster.setFromCamera(this._pointer, this._camera);
-    const visible = this.roomMeshes.filter((m) => !this.hiddenFloors.has(m.userData.fi));
+    const visible = this.roomMeshes.filter((m) => !this.hiddenFloors.has(m.userData.fi) && !m.userData.isLabel);
     const hits = this._raycaster.intersectObjects(visible, false);
     return hits.length ? hits[0].object : null;
   }
