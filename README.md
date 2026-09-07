@@ -45,9 +45,15 @@ frontend:
 
 Im Zeichenbereich gilt: Rechteck ziehen verschiebt den Raum, die blaue Ecke unten rechts skaliert ihn. Werte lassen sich darunter auch exakt eintippen.
 
+Unter dem Zeichenbereich steht die Liste aller Raeume der Etage. Ein Klick auf einen Eintrag waehlt ihn aus, der Knopf daneben loescht ihn.
+
+Raumnamen sind freiwillig. Ohne Namen zeigt die Karte "Raum 1", "Raum 2" und so weiter, ohne dass etwas in die Konfiguration geschrieben wird.
+
 ## Anbauten
 
-Der gestrichelte Rahmen im Zeichenbereich markiert den Hauptbaukoerper. Die Flaeche ausserhalb gehoert zum Zeichenbereich dazu. Ein Raum, den du dorthin ziehst, wird als Anbau dargestellt. Er liegt dann bei negativem `x` oder `z`, oder jenseits von Hausbreite und Haustiefe. Der Rand betraegt 30 Prozent der jeweiligen Hausseite, mindestens 2 m.
+Der Knopf "+ Anbau" legt einen Raum direkt neben dem Hauptbaukoerper an. Er ist danach frei verschiebbar.
+
+Der gestrichelte Rahmen im Zeichenbereich markiert den Hauptbaukoerper. Die Flaeche ausserhalb gehoert zum Zeichenbereich dazu. Auch ein vorhandener Raum, den du dorthin ziehst, wird zum Anbau. Er liegt dann bei negativem `x` oder `z`, oder jenseits von Hausbreite und Haustiefe. Der Rand betraegt 30 Prozent der jeweiligen Hausseite, mindestens 2 m.
 
 Das Dach deckt nur den Hauptbaukoerper ab. Ein eigenes Dach fuer den Anbau gibt es nicht.
 
@@ -133,6 +139,7 @@ floors:
 | `floors[].name` | Text | Etage | Bezeichnung |
 | `floors[].height` | 1.5 bis 6 | 2.6 | Geschosshoehe in m |
 | `floors[].floorplan` | Pfad | leer | Grundriss-Bild |
+| `rooms[].name` | Text | leer | Optional. Leer bedeutet automatische Nummerierung in der Anzeige |
 | `rooms[].type` | siehe Raumtypen | room | Raumtyp, bestimmt die Farbe ohne Sensor |
 | `rooms[].x` `.z` | Zahl | 0 | Position der linken oberen Ecke in m, negativ fuer Anbauten |
 | `rooms[].w` `.d` | Zahl | 3 | Breite und Tiefe in m |

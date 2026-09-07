@@ -1,5 +1,5 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 
 const ROOF_TYPES = [
   { value: 'flat',  label: 'Flachdach' },
@@ -40,27 +40,7 @@ const DEFAULT_CONFIG = () => ({
   house: { width: 12, depth: 10 },
   roof: { type: 'gable', height: 3, overhang: 0.4, axis: 'x' },
   floors: [
-    {
-      name: 'Erdgeschoss',
-      height: 2.6,
-      floorplan: '',
-      rooms: [
-        { name: 'Wohnzimmer', x: 0, z: 0, w: 6,   d: 5, temp_entity: '' },
-        { name: 'Kueche',     x: 6, z: 0, w: 6,   d: 5, temp_entity: '' },
-        { name: 'Bad',        x: 0, z: 5, w: 4,   d: 5, temp_entity: '' },
-        { name: 'Flur',       x: 4, z: 5, w: 8,   d: 5, temp_entity: '' }
-      ]
-    },
-    {
-      name: 'Obergeschoss',
-      height: 2.5,
-      floorplan: '',
-      rooms: [
-        { name: 'Zimmer 1', x: 0, z: 0, w: 6, d: 6, temp_entity: '' },
-        { name: 'Zimmer 2', x: 6, z: 0, w: 6, d: 6, temp_entity: '' },
-        { name: 'Flur OG',  x: 0, z: 6, w: 12, d: 4, temp_entity: '' }
-      ]
-    }
+    { name: 'Erdgeschoss', height: 2.6, floorplan: '', rooms: [] }
   ]
 });
 
@@ -86,6 +66,11 @@ function tempColorHex(value) {
 
 function toCss(n) {
   return '#' + n.toString(16).padStart(6, '0');
+}
+
+function displayName(room, index) {
+  const nm = (room.name || '').trim();
+  return nm !== '' ? nm : 'Raum ' + (index + 1);
 }
 
 function fmtTemp(raw) {
@@ -174,7 +159,7 @@ class House3DCard extends HTMLElement {
         height: clampNum(f.height, 1.5, 6, 2.6),
         floorplan: f.floorplan || '',
         rooms: Array.isArray(f.rooms) ? f.rooms.map((r) => ({
-          name: r.name || 'Raum',
+          name: typeof r.name === 'string' ? r.name : '',
           type: r.type || 'room',
           x: clampNum(r.x, -60, 60, 0),
           z: clampNum(r.z, -60, 60, 0),
@@ -380,7 +365,7 @@ class House3DCard extends HTMLElement {
     const c = toCss(tempColorHex(raw));
     btn.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-        <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${room.name}</span>
+        <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${displayName(room, ri)}</span>
         <span style="font-weight:700;color:${c};white-space:nowrap;">${fmtTemp(raw)}&deg;</span>
       </div>
     `;
@@ -441,7 +426,7 @@ class House3DCard extends HTMLElement {
     const area = (room.w * room.d).toFixed(1);
 
     this.querySelector('#info-panel').innerHTML = `
-      <div style="font-weight:600;font-size:14px;">${room.name}</div>
+      <div style="font-weight:600;font-size:14px;">${displayName(room, ri)}</div>
       <div style="font-size:11px;color:#7c8595;margin-top:-6px;">${floor.name} &middot; ${roomTypeLabel(room.type)}</div>
       <div style="background:#161a21;border:1px solid #262a33;border-radius:6px;padding:16px;text-align:center;">
         <div style="font-size:11px;color:#7c8595;margin-bottom:6px;">Temperatur</div>
@@ -559,7 +544,7 @@ class House3DCard extends HTMLElement {
           baseY + floor.height / 2,
           room.z + room.d / 2 - D / 2
         );
-        mesh.userData = { fi, ri, name: room.name };
+        mesh.userData = { fi, ri, name: displayName(room, ri) };
         mesh.renderOrder = 2;
 
         const glow = new THREE.LineSegments(
@@ -859,8 +844,8 @@ class House3DCardEditor extends HTMLElement {
           <div id="ridge-row">
             <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Firstrichtung</div>
             <div style="display:flex;gap:6px;">
-              <button class="axis-btn" data-axis="x" style="flex:1;padding:8px;border-radius:6px;cursor:pointer;">laengs (X)</button>
-              <button class="axis-btn" data-axis="z" style="flex:1;padding:8px;border-radius:6px;cursor:pointer;">quer (Z)</button>
+              <button class="axis-btn" type="button" data-axis="x" style="flex:1;padding:8px;border-radius:6px;cursor:pointer;">laengs (X)</button>
+              <button class="axis-btn" type="button" data-axis="z" style="flex:1;padding:8px;border-radius:6px;cursor:pointer;">quer (Z)</button>
             </div>
           </div>
         </div>
@@ -869,8 +854,8 @@ class House3DCardEditor extends HTMLElement {
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <div style="font-weight:600;">Etagen</div>
             <div style="display:flex;gap:6px;">
-              <button id="floor-add" style="padding:6px 10px;border-radius:6px;cursor:pointer;">Etage hinzufuegen</button>
-              <button id="floor-del" style="padding:6px 10px;border-radius:6px;cursor:pointer;">entfernen</button>
+              <button id="floor-add" type="button" style="padding:6px 10px;border-radius:6px;cursor:pointer;">+ Etage</button>
+              <button id="floor-del" type="button" style="padding:6px 10px;border-radius:6px;cursor:pointer;">Etage entfernen</button>
             </div>
           </div>
           <div id="floor-tabs" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
@@ -889,14 +874,20 @@ class House3DCardEditor extends HTMLElement {
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
               <div style="font-size:12px;color:var(--secondary-text-color);">Raeume aufziehen</div>
               <div style="display:flex;gap:6px;">
-                <button id="room-add" style="padding:6px 10px;border-radius:6px;cursor:pointer;">Raum</button>
-                <button id="room-del" style="padding:6px 10px;border-radius:6px;cursor:pointer;">loeschen</button>
+                <button id="room-add" type="button" style="padding:6px 10px;border-radius:6px;cursor:pointer;">+ Raum</button>
+                <button id="annex-add" type="button" style="padding:6px 10px;border-radius:6px;cursor:pointer;">+ Anbau</button>
               </div>
             </div>
             <canvas id="plan-canvas" style="width:100%;border:1px solid var(--divider-color);border-radius:6px;background:#1b1f27;cursor:crosshair;touch-action:none;display:block;"></canvas>
             <div style="font-size:11px;color:var(--secondary-text-color);margin-top:6px;">
               Rechteck ziehen zum Verschieben. Ecke unten rechts zum Skalieren.
+              Anbauten gehoeren ausserhalb des gestrichelten Rahmens.
             </div>
+          </div>
+
+          <div>
+            <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Raeume dieser Etage</div>
+            <div id="room-list" style="display:flex;flex-direction:column;gap:4px;"></div>
           </div>
 
           <div id="room-editor" style="border-top:1px solid var(--divider-color);padding-top:12px;display:flex;flex-direction:column;gap:10px;"></div>
@@ -930,6 +921,7 @@ class House3DCardEditor extends HTMLElement {
       b.className = 'roof-btn';
       b.dataset.type = rt.value;
       b.textContent = rt.label;
+      b.type = 'button';
       b.style.cssText = 'flex:1;min-width:90px;padding:8px;border-radius:6px;cursor:pointer;';
       b.addEventListener('click', () => {
         this._config.roof.type = rt.value;
@@ -984,26 +976,112 @@ class House3DCardEditor extends HTMLElement {
     });
 
     this.querySelector('#room-add').addEventListener('click', () => {
-      const f = this._config.floors[this._activeFloor];
-      f.rooms.push({ name: 'Raum ' + (f.rooms.length + 1), type: 'room', x: 0, z: 0, w: 3, d: 3, temp_entity: '' });
-      this._selRoom = f.rooms.length - 1;
-      this._buildRoomEditor(true);
-      this._drawPlan();
-      this._fire();
+      this._addRoom('room');
     });
 
-    this.querySelector('#room-del').addEventListener('click', () => {
-      const f = this._config.floors[this._activeFloor];
-      if (this._selRoom === null || !f.rooms[this._selRoom]) return;
-      f.rooms.splice(this._selRoom, 1);
-      this._selRoom = null;
-      this._buildRoomEditor(true);
-      this._drawPlan();
-      this._fire();
+    this.querySelector('#annex-add').addEventListener('click', () => {
+      this._addRoom('annex');
     });
 
     this._setupCanvas();
     this._refresh();
+  }
+
+  _addRoom(type) {
+    const f = this._config.floors[this._activeFloor];
+    const b = this._bounds();
+    let x = 0, z = 0, w = 3, d = 3;
+
+    if (type === 'annex') {
+      // Anbau rechts neben dem Hauptbaukoerper absetzen, vollstaendig im Zeichenbereich
+      const gap = 0.2;
+      w = round1(Math.max(1, Math.min(4, b.mx - gap)));
+      x = round1(b.W + gap);
+      z = round1(Math.min(2, Math.max(0, b.D - d)));
+    } else {
+      // freie Stelle im Hauptbaukoerper suchen
+      const step = 0.5;
+      outer:
+      for (let zz = 0; zz <= b.D - d; zz += step) {
+        for (let xx = 0; xx <= b.W - w; xx += step) {
+          const clash = f.rooms.some((r) =>
+            xx < r.x + r.w && xx + w > r.x && zz < r.z + r.d && zz + d > r.z);
+          if (!clash) { x = round1(xx); z = round1(zz); break outer; }
+        }
+      }
+    }
+
+    f.rooms.push({ name: '', type: type, x: x, z: z, w: w, d: d, temp_entity: '' });
+    this._selRoom = f.rooms.length - 1;
+    this._buildRoomList();
+    this._buildRoomEditor(true);
+    this._drawPlan();
+    this._fire();
+  }
+
+  _deleteRoom(index) {
+    const f = this._config.floors[this._activeFloor];
+    if (!f.rooms[index]) return;
+    f.rooms.splice(index, 1);
+    if (this._selRoom === index) this._selRoom = null;
+    else if (this._selRoom !== null && this._selRoom > index) this._selRoom--;
+    this._buildRoomList();
+    this._buildRoomEditor(true);
+    this._drawPlan();
+    this._fire();
+  }
+
+  _buildRoomList() {
+    const box = this.querySelector('#room-list');
+    if (!box) return;
+    const f = this._config.floors[this._activeFloor];
+    box.innerHTML = '';
+
+    if (!f.rooms.length) {
+      box.innerHTML = '<div style="font-size:12px;color:var(--secondary-text-color);">Noch keine Raeume. Mit "+ Raum" anlegen.</div>';
+      return;
+    }
+
+    f.rooms.forEach((r, i) => {
+      const row = document.createElement('div');
+      const active = i === this._selRoom;
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;border:1px solid ' +
+        (active ? 'var(--primary-color)' : 'var(--divider-color)') + ';background:' +
+        (active ? 'rgba(127,127,127,0.12)' : 'transparent') + ';';
+
+      const swatch = document.createElement('span');
+      swatch.style.cssText = 'width:12px;height:12px;border-radius:3px;flex-shrink:0;background:' + toCss(roomTypeColor(r.type)) + ';';
+      row.appendChild(swatch);
+
+      const label = document.createElement('button');
+      label.type = 'button';
+      label.style.cssText = 'flex:1;text-align:left;background:transparent;border:0;color:var(--primary-text-color);cursor:pointer;font-size:13px;padding:2px 0;font-family:inherit;';
+      const nm = (r.name || '').trim();
+      label.innerHTML = (nm !== ''
+        ? '<span>' + nm + '</span>'
+        : '<span style="opacity:.55;font-style:italic;">ohne Namen</span>') +
+        '<span style="opacity:.55;font-size:11px;"> &middot; ' + roomTypeLabel(r.type) + ' &middot; ' + r.w + ' x ' + r.d + ' m</span>';
+      label.addEventListener('click', () => {
+        this._selRoom = i;
+        this._buildRoomList();
+        this._buildRoomEditor(true);
+        this._drawPlan();
+      });
+      row.appendChild(label);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.title = 'Raum loeschen';
+      del.textContent = 'loeschen';
+      del.style.cssText = 'background:transparent;border:1px solid var(--divider-color);border-radius:5px;color:var(--error-color,#c0392b);cursor:pointer;font-size:11px;padding:4px 8px;flex-shrink:0;font-family:inherit;';
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._deleteRoom(i);
+      });
+      row.appendChild(del);
+
+      box.appendChild(row);
+    });
   }
 
   _buildFloorTabs() {
@@ -1013,6 +1091,7 @@ class House3DCardEditor extends HTMLElement {
       const b = document.createElement('button');
       const active = i === this._activeFloor;
       b.textContent = f.name || ('Etage ' + (i + 1));
+      b.type = 'button';
       b.style.cssText = 'padding:8px 12px;border-radius:6px;cursor:pointer;border:1px solid var(--divider-color);' +
         (active ? 'background:var(--primary-color);color:var(--text-primary-color);font-weight:600;' : 'background:transparent;color:var(--primary-text-color);');
       b.addEventListener('click', () => {
@@ -1058,6 +1137,7 @@ class House3DCardEditor extends HTMLElement {
     this.querySelector('#f-plan').value = floor.floorplan || '';
 
     this._loadPlanImage();
+    this._buildRoomList();
     this._buildRoomEditor(true);
   }
 
@@ -1151,16 +1231,38 @@ class House3DCardEditor extends HTMLElement {
       ctx.lineWidth = sel ? 2 : 1;
       ctx.strokeRect(x, y, w, h);
 
+      // Beschriftung mittig im Raum
       ctx.save();
       ctx.beginPath();
       ctx.rect(x + 2, y + 2, Math.max(0, w - 4), Math.max(0, h - 4));
       ctx.clip();
-      ctx.fillStyle = '#fff';
-      ctx.font = '11px sans-serif';
-      ctx.fillText(r.name, x + 4, y + 4);
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
-      ctx.font = '9px sans-serif';
-      ctx.fillText(r.w + ' x ' + r.d + ' m', x + 4, y + 17);
+
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const nm = (r.name || '').trim();
+      const showSize = h > 34;
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      if (nm !== '') {
+        ctx.fillStyle = '#fff';
+        ctx.font = '600 11px sans-serif';
+        ctx.fillText(nm, cx, showSize ? cy - 7 : cy);
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.font = 'italic 10px sans-serif';
+        ctx.fillText('ohne Namen', cx, showSize ? cy - 7 : cy);
+      }
+
+      if (showSize) {
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.font = '9px sans-serif';
+        ctx.fillText(r.w + ' x ' + r.d + ' m', cx, cy + 7);
+      }
+
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
       ctx.restore();
 
       if (sel) {
@@ -1199,7 +1301,13 @@ class House3DCardEditor extends HTMLElement {
         if (p.x >= r.x && p.x <= hx && p.z >= r.z && p.z <= hz) { hit = i; break; }
       }
 
-      if (hit === null) { this._selRoom = null; this._drawPlan(); this._buildRoomEditor(true); return; }
+      if (hit === null) {
+        this._selRoom = null;
+        this._drawPlan();
+        this._buildRoomList();
+        this._buildRoomEditor(true);
+        return;
+      }
 
       this._selRoom = hit;
       mode = handle ? 'resize' : 'move';
@@ -1207,6 +1315,7 @@ class House3DCardEditor extends HTMLElement {
       orig = Object.assign({}, floor.rooms[hit]);
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       this._drawPlan();
+      this._buildRoomList();
       this._buildRoomEditor(true);
     });
 
@@ -1262,14 +1371,14 @@ class House3DCardEditor extends HTMLElement {
     box.innerHTML = '';
 
     const nameF = document.createElement('ha-textfield');
-    nameF.setAttribute('label', 'Raumname');
+    nameF.setAttribute('label', 'Raumname (optional)');
     nameF.style.width = '100%';
     nameF.id = 'room-name-field';
     nameF.value = room.name || '';
     nameF.addEventListener('input', (e) => {
       room.name = e.target.value;
       this._drawPlan();
-      this._buildFloorTabs();
+      this._buildRoomList();
       this._fire();
     });
     box.appendChild(nameF);
@@ -1289,6 +1398,7 @@ class House3DCardEditor extends HTMLElement {
     sel.addEventListener('change', (e) => {
       room.type = e.target.value;
       this._drawPlan();
+      this._buildRoomList();
       this._fire();
     });
     typeWrap.appendChild(sel);
@@ -1332,13 +1442,14 @@ class House3DCardEditor extends HTMLElement {
     const dup = document.createElement('button');
     dup.textContent = 'Raum duplizieren';
     dup.style.cssText = 'padding:8px;border-radius:6px;cursor:pointer;border:1px solid var(--divider-color);background:transparent;color:var(--primary-text-color);';
+    dup.type = 'button';
     dup.addEventListener('click', () => {
       const copy = Object.assign({}, room);
-      copy.name = room.name + ' Kopie';
       copy.x = round1(Math.min(room.x + 1, 60));
       copy.z = round1(Math.min(room.z + 1, 60));
       floor.rooms.push(copy);
       this._selRoom = floor.rooms.length - 1;
+      this._buildRoomList();
       this._buildRoomEditor(true);
       this._drawPlan();
       this._fire();
