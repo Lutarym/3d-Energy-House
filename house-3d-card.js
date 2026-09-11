@@ -1,5 +1,5 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const VERSION = '2.8.0';
+const VERSION = '2.9.0';
 
 const ROOF_TYPES = [
   { value: 'flat',  label: 'Flachdach' },
@@ -56,6 +56,7 @@ const DEFAULT_CONFIG = () => ({
   opacity: 40,
   house: { width: 12, depth: 10 },
   roof: { type: 'gable', height: 3, overhang: 0.4, axis: 'x' },
+  history: { hours: 0 },
   floors: [
     { name: 'Erdgeschoss', height: 2.6, floorplan: '', rooms: [] }
   ]
@@ -242,6 +243,9 @@ class House3DCard extends HTMLElement {
         overhang: clampNum(c.roof && c.roof.overhang, 0, 2, 0.4),
         axis: (c.roof && c.roof.axis) === 'z' ? 'z' : 'x'
       },
+      history: {
+        hours: clampNum(c.history && c.history.hours, 0, 26280, 0)
+      },
       floors: Array.isArray(c.floors) && c.floors.length ? c.floors.map((f) => ({
         name: f.name || 'Etage',
         height: clampNum(f.height, 1.5, 6, 2.6),
@@ -262,9 +266,11 @@ class House3DCard extends HTMLElement {
     this.opacity = this.config.opacity / 100;
 
     if (this._built) {
+      this.setLive();
       this.buildSidebar();
       this.rebuildScene();
       this.updateTemperatures();
+      this.loadHistory();
     }
   }
 
@@ -293,6 +299,10 @@ class House3DCard extends HTMLElement {
     this.roofHidden = false;
     this.labels = [];
     this.labelsVisible = true;
+    this.histBuckets = [];
+    this.histValues = {};
+    this.histIndex = null;      // null bedeutet Live-Anzeige
+    this.histPlaying = false;
 
     this.innerHTML = `
       <ha-card style="overflow:hidden;">
@@ -330,9 +340,17 @@ class House3DCard extends HTMLElement {
               <button id="auto-rot"  title="Dauerdrehung"  style="height:32px;padding:0 10px;background:#1c2029;color:#fff;border:1px solid #333a46;border-radius:6px;cursor:pointer;font-size:12px;">Auto</button>
               <button id="reset-cam" title="Ansicht zuruecksetzen" style="height:32px;padding:0 10px;background:#1c2029;color:#fff;border:1px solid #333a46;border-radius:6px;cursor:pointer;font-size:12px;">Reset</button>
             </div>
-            <div style="position:absolute;bottom:10px;left:10px;right:10px;display:flex;align-items:center;gap:10px;z-index:5;">
-              <span style="font-size:11px;color:#7c8595;white-space:nowrap;">Transparenz</span>
-              <input id="opacity" type="range" min="5" max="100" value="40" style="flex:1;cursor:pointer;">
+            <div style="position:absolute;bottom:10px;left:10px;right:10px;display:flex;flex-direction:column;gap:8px;z-index:5;">
+              <div id="history-bar" style="display:none;align-items:center;gap:8px;background:rgba(13,15,20,0.85);border:1px solid #262a33;border-radius:8px;padding:6px 10px;">
+                <button id="hist-play" title="Abspielen" style="width:30px;height:30px;flex-shrink:0;background:#1c2029;color:#fff;border:1px solid #333a46;border-radius:6px;cursor:pointer;font-size:12px;">&#9654;</button>
+                <input id="hist-slider" type="range" min="0" max="0" value="0" style="flex:1;cursor:pointer;">
+                <span id="hist-time" style="font-size:11px;color:#c8cfdb;white-space:nowrap;min-width:118px;text-align:right;font-variant-numeric:tabular-nums;">jetzt</span>
+                <button id="hist-now" style="height:30px;padding:0 10px;flex-shrink:0;background:#1c2029;color:#fff;border:1px solid #333a46;border-radius:6px;cursor:pointer;font-size:11px;">Jetzt</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:11px;color:#7c8595;white-space:nowrap;">Transparenz</span>
+                <input id="opacity" type="range" min="5" max="100" value="40" style="flex:1;cursor:pointer;">
+              </div>
             </div>
           </div>
 
@@ -352,6 +370,7 @@ class House3DCard extends HTMLElement {
 
   disconnectedCallback() {
     this._stopped = true;
+    this.stopPlay();
     if (this._ro) this._ro.disconnect();
   }
 
@@ -376,6 +395,7 @@ class House3DCard extends HTMLElement {
       this.querySelector('#status').style.display = 'none';
       this.initThree();
       this.updateTemperatures();
+      this.loadHistory();
     } catch (e) {
       this.showError('3D-Aufbau fehlgeschlagen: ' + e.message);
     }
@@ -467,8 +487,14 @@ class House3DCard extends HTMLElement {
     `;
   }
 
+  isLive() {
+    return this.histIndex === null;
+  }
+
+  // Uebernimmt die aktuellen Werte aus hass. Im Rueckblick nicht anfassen.
   updateTemperatures() {
     if (!this._built || !this._hass || !this.config) return;
+    if (!this.isLive()) return;
 
     this.config.floors.forEach((floor, fi) => {
       floor.rooms.forEach((room, ri) => {
@@ -480,17 +506,30 @@ class House3DCard extends HTMLElement {
           val = st.attributes.current_temperature;
         }
         this.temps[key] = val;
+      });
+    });
 
-        const label = this.labels.find((l) => l.userData.fi === fi && l.userData.ri === ri);
-        if (label) this.updateLabel(label, displayName(room, ri), this.labelTemp(fi, ri));
+    this.refreshValues();
+  }
+
+  // Faerbt Raeume, Beschriftung, Liste und Infofeld nach this.temps
+  refreshValues() {
+    if (!this._built || !this.config) return;
+
+    this.config.floors.forEach((floor, fi) => {
+      floor.rooms.forEach((room, ri) => {
+        const val = this.temps[this.tempKey(fi, ri)];
+        const hasVal = !(val === undefined || val === null || val === '' || isNaN(parseFloat(val)));
+        const c = hasVal ? tempColorHex(val) : roomColor(room);
 
         const mesh = this.roomMeshes.find((m) => m.userData.fi === fi && m.userData.ri === ri);
         if (mesh) {
-          const hasVal = !(val === undefined || val === null || val === '' || isNaN(parseFloat(val)));
-          const c = hasVal ? tempColorHex(val) : roomColor(room);
           mesh.material.color.setHex(c);
           if (mesh.userData.glow) mesh.userData.glow.material.color.setHex(c);
         }
+
+        const label = this.labels.find((l) => l.userData.fi === fi && l.userData.ri === ri);
+        if (label) this.updateLabel(label, displayName(room, ri), this.labelTemp(fi, ri));
       });
     });
 
@@ -499,6 +538,157 @@ class House3DCard extends HTMLElement {
     });
 
     if (this.selected) this.updateInfoPanel(this.selected.fi, this.selected.ri);
+  }
+
+  /* ---------- Rueckblick ---------- */
+
+  histEntities() {
+    const ids = [];
+    this.config.floors.forEach((f) => f.rooms.forEach((r) => {
+      if (r.temp_entity && ids.indexOf(r.temp_entity) === -1) ids.push(r.temp_entity);
+    }));
+    return ids;
+  }
+
+  async loadHistory() {
+    const bar = this.querySelector('#history-bar');
+    if (!bar) return;
+
+    const hours = this.config.history.hours;
+    const ids = this.histEntities();
+
+    if (!hours || !ids.length || !this._hass || typeof this._hass.callWS !== 'function') {
+      bar.style.display = 'none';
+      this.histBuckets = [];
+      return;
+    }
+
+    const end = new Date();
+    const start = new Date(end.getTime() - hours * 3600 * 1000);
+
+    let res;
+    try {
+      res = await this._hass.callWS({
+        type: 'recorder/statistics_during_period',
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        statistic_ids: ids,
+        period: 'hour',
+        types: ['mean']
+      });
+    } catch (e) {
+      console.warn('house-3d-card: Verlauf nicht abrufbar:', e);
+      bar.style.display = 'none';
+      return;
+    }
+
+    // Zeitraster aus vollen Stunden aufbauen
+    const step = 3600 * 1000;
+    const first = Math.floor(start.getTime() / step) * step;
+    const last = Math.floor(end.getTime() / step) * step;
+    const buckets = [];
+    for (let t = first; t <= last; t += step) buckets.push(t);
+
+    const values = {};
+    ids.forEach((id) => {
+      const series = (res && res[id]) || [];
+      const byTime = {};
+      series.forEach((row) => {
+        const ts = typeof row.start === 'number' ? row.start : Date.parse(row.start);
+        if (!isNaN(ts) && row.mean !== undefined && row.mean !== null) {
+          byTime[Math.floor(ts / step) * step] = row.mean;
+        }
+      });
+      // Luecken mit dem letzten bekannten Wert fuellen
+      const arr = [];
+      let lastVal = null;
+      buckets.forEach((t) => {
+        if (byTime[t] !== undefined) lastVal = byTime[t];
+        arr.push(lastVal);
+      });
+      values[id] = arr;
+    });
+
+    this.histBuckets = buckets;
+    this.histValues = values;
+
+    const slider = this.querySelector('#hist-slider');
+    slider.min = '0';
+    slider.max = String(Math.max(0, buckets.length - 1));
+    slider.value = slider.max;
+    bar.style.display = buckets.length > 1 ? 'flex' : 'none';
+    this.setLive();
+  }
+
+  applyBucket(index) {
+    if (!this.histBuckets.length) return;
+    const i = Math.max(0, Math.min(this.histBuckets.length - 1, index));
+    this.histIndex = i;
+
+    this.config.floors.forEach((floor, fi) => {
+      floor.rooms.forEach((room, ri) => {
+        const key = this.tempKey(fi, ri);
+        const series = room.temp_entity ? this.histValues[room.temp_entity] : null;
+        const v = series ? series[i] : null;
+        this.temps[key] = (v === null || v === undefined) ? undefined : v;
+      });
+    });
+
+    const d = new Date(this.histBuckets[i]);
+    const label = d.toLocaleString('de-DE', {
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+    const timeEl = this.querySelector('#hist-time');
+    if (timeEl) timeEl.textContent = label + ' Uhr';
+
+    const nowBtn = this.querySelector('#hist-now');
+    if (nowBtn) { nowBtn.style.background = '#2f6bff'; nowBtn.style.borderColor = '#2f6bff'; }
+
+    const slider = this.querySelector('#hist-slider');
+    if (slider && parseInt(slider.value, 10) !== i) slider.value = String(i);
+
+    this.refreshValues();
+  }
+
+  setLive() {
+    this.histIndex = null;
+    this.stopPlay();
+
+    const slider = this.querySelector('#hist-slider');
+    if (slider) slider.value = slider.max;
+
+    const timeEl = this.querySelector('#hist-time');
+    if (timeEl) timeEl.textContent = 'jetzt';
+
+    const nowBtn = this.querySelector('#hist-now');
+    if (nowBtn) { nowBtn.style.background = '#1c2029'; nowBtn.style.borderColor = '#333a46'; }
+
+    this.updateTemperatures();
+  }
+
+  togglePlay() {
+    if (this.histPlaying) { this.stopPlay(); return; }
+    if (!this.histBuckets.length) return;
+
+    this.histPlaying = true;
+    const btn = this.querySelector('#hist-play');
+    if (btn) { btn.innerHTML = '&#10074;&#10074;'; btn.style.background = '#2f6bff'; }
+
+    let i = (this.histIndex === null) ? 0 : this.histIndex;
+    this.applyBucket(i);
+
+    this._playTimer = setInterval(() => {
+      i++;
+      if (i >= this.histBuckets.length) i = 0;
+      this.applyBucket(i);
+    }, 450);
+  }
+
+  stopPlay() {
+    this.histPlaying = false;
+    if (this._playTimer) { clearInterval(this._playTimer); this._playTimer = null; }
+    const btn = this.querySelector('#hist-play');
+    if (btn) { btn.innerHTML = '&#9654;'; btn.style.background = '#1c2029'; }
   }
 
   selectRoom(fi, ri) {
@@ -527,6 +717,7 @@ class House3DCard extends HTMLElement {
     this.querySelector('#info-panel').innerHTML = `
       <div style="font-weight:600;font-size:14px;">${displayName(room, ri)}</div>
       <div style="font-size:11px;color:#7c8595;margin-top:-6px;">${floor.name} &middot; ${roomTypeLabel(room.type)}</div>
+      ${this.isLive() ? '' : '<div style="font-size:11px;color:#f1c40f;">Rueckblick, Stundenmittel</div>'}
       <div style="background:#161a21;border:1px solid #262a33;border-radius:6px;padding:16px;text-align:center;">
         <div style="font-size:11px;color:#7c8595;margin-bottom:6px;">Temperatur</div>
         <div style="font-size:30px;font-weight:700;color:${c};line-height:1;">${fmtTemp(raw)}<span style="font-size:15px;">&deg;C</span></div>
@@ -877,6 +1068,14 @@ class House3DCard extends HTMLElement {
       this.applyOpacity();
     });
 
+    this.querySelector('#hist-slider').addEventListener('input', (e) => {
+      this.stopPlay();
+      this.applyBucket(parseInt(e.target.value, 10));
+    });
+
+    this.querySelector('#hist-play').addEventListener('click', () => this.togglePlay());
+    this.querySelector('#hist-now').addEventListener('click', () => this.setLive());
+
     const resize = () => {
       const w = container.clientWidth, h = container.clientHeight;
       if (!w || !h) return;
@@ -935,6 +1134,9 @@ class House3DCardEditor extends HTMLElement {
         height: (c.roof && c.roof.height !== undefined) ? c.roof.height : 3,
         overhang: (c.roof && c.roof.overhang !== undefined) ? c.roof.overhang : 0.4,
         axis: (c.roof && c.roof.axis) === 'z' ? 'z' : 'x'
+      },
+      history: {
+        hours: (c.history && c.history.hours !== undefined) ? c.history.hours : 0
       },
       floors: (Array.isArray(c.floors) && c.floors.length) ? c.floors : base.floors
     };
@@ -1008,6 +1210,16 @@ class House3DCardEditor extends HTMLElement {
         <div style="display:flex;gap:12px;">
           <div style="flex:1;">${fieldHtml('f-width', 'Hausbreite in m', 'number', 'step="0.1" min="3" max="40"')}</div>
           <div style="flex:1;">${fieldHtml('f-depth', 'Haustiefe in m', 'number', 'step="0.1" min="3" max="40"')}</div>
+        </div>
+
+        <div style="border:1px solid var(--divider-color);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+          <div style="font-weight:600;">Rueckblick</div>
+          <div>${fieldHtml('f-hist', 'Zeitraum in Stunden, 0 schaltet aus', 'number', 'step="1" min="0" max="26280"')}</div>
+          <div style="font-size:11px;color:var(--secondary-text-color);">
+            Blendet in der Karte einen Schieberegler mit Abspielen-Knopf ein.
+            Grundlage sind die Stundenmittel der Langzeitstatistik.
+            24 entspricht einem Tag, 168 einer Woche, 8760 einem Jahr.
+          </div>
         </div>
 
         <div style="border:1px solid var(--divider-color);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:12px;">
@@ -1107,6 +1319,7 @@ class House3DCardEditor extends HTMLElement {
     numField('#f-depth',   3,   40, 10,  (v) => { this._config.house.depth = v; });
     numField('#f-roof-h',  0.2, 10, 3,   (v) => { this._config.roof.height = v; });
     numField('#f-roof-oh', 0,   2,  0.4, (v) => { this._config.roof.overhang = v; });
+    numField('#f-hist',    0, 26280, 0,   (v) => { this._config.history.hours = Math.round(v); });
 
     const roofBox = this.querySelector('#roof-types');
     ROOF_TYPES.forEach((rt) => {
@@ -1367,6 +1580,7 @@ class House3DCardEditor extends HTMLElement {
     setField('#f-depth', this._config.house.depth);
     setField('#f-roof-h', this._config.roof.height);
     setField('#f-roof-oh', this._config.roof.overhang);
+    setField('#f-hist', this._config.history.hours);
 
     this.querySelectorAll('.roof-btn').forEach((b) => {
       const active = b.dataset.type === this._config.roof.type;

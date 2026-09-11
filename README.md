@@ -12,6 +12,7 @@ Drehbare 3D-Darstellung eines Einfamilienhauses fuer Home Assistant, mit Etagen,
 - Etagen und Dach einzeln ausblendbar
 - Raeume nach Temperatur eingefaerbt
 - Beschriftung mit Raumname und Temperatur direkt im 3D-Modell, abschaltbar
+- Rueckblick: Schieberegler und Abspielen-Knopf fuer den Temperaturverlauf
 - Drehen per Maus, per Button oder automatisch, Zoom per Mausrad
 - Transparenz stufenlos einstellbar
 - Vollstaendiger visueller Editor
@@ -145,6 +146,7 @@ floors:
 | `roof.height` | 0.2 bis 10 | 3 | Hoehe des Dachs in m |
 | `roof.overhang` | 0 bis 2 | 0.4 | Dachueberstand in m |
 | `roof.axis` | x, z | x | Firstrichtung bei Sattel- und Pultdach |
+| `history.hours` | 0 bis 26280 | 0 | Zeitraum des Rueckblicks in Stunden, 0 schaltet ihn ab |
 | `floors[].name` | Text | Etage | Bezeichnung |
 | `floors[].height` | 1.5 bis 6 | 2.6 | Geschosshoehe in m |
 | `floors[].floorplan` | Pfad | leer | Grundriss-Bild |
@@ -156,6 +158,31 @@ floors:
 | `rooms[].temp_entity` | Entity | leer | Temperaturquelle |
 
 Bei `climate`-Entities wird das Attribut `current_temperature` verwendet, sonst der State.
+
+## Rueckblick in die Vergangenheit
+
+Traegst du im Editor unter Rueckblick einen Zeitraum in Stunden ein, erscheint
+in der Karte eine Leiste mit Schieberegler, Abspielen-Knopf, Zeitangabe und
+einem Knopf "Jetzt". Der Schieberegler faerbt das Haus mit den Temperaturen des
+gewaehlten Zeitpunkts, die Beschriftung zeigt die damaligen Werte.
+
+Anhaltspunkte: 24 entspricht einem Tag, 168 einer Woche, 720 einem Monat,
+8760 einem Jahr. 0 schaltet die Leiste ab.
+
+Grundlage sind die Stundenmittel der Langzeitstatistik, abgerufen ueber
+`recorder/statistics_during_period`. Sie bleiben dauerhaft erhalten, anders als
+die genauen Messwerte, die der Recorder nach `purge_keep_days` loescht, in der
+Voreinstellung nach 10 Tagen.
+
+Voraussetzungen:
+
+- Der Sensor muss eine Langzeitstatistik fuehren. Das tun Temperatursensoren mit
+  `state_class: measurement`, was bei Temperaturmessungen der Regelfall ist.
+- Der Sensor darf im Recorder nicht ausgeschlossen sein.
+- Sensoren ohne Statistik bleiben im Rueckblick grau.
+
+Weil es Stundenmittel sind, zeigt der Rueckblick keine kurzen Ausschlaege. Fuer
+eine Stunde ohne Messwerte wird der zuletzt bekannte Wert weitergefuehrt.
 
 ## Farbskala
 
@@ -180,6 +207,9 @@ Bei `climate`-Entities wird das Attribut `current_temperature` verwendet, sonst 
 | Klick auf einen Raum | Raum auswaehlen |
 | Haken links | Etage, Dach oder Beschriftung ausblenden |
 | Schieberegler unten | Transparenz |
+| Schieberegler im Rueckblick | Zeitpunkt waehlen |
+| Abspielen | Verlauf durchlaufen lassen |
+| Jetzt | zurueck zur Live-Anzeige |
 
 Blickwinkel und Zoom bleiben erhalten, wenn du im Editor etwas aenderst.
 
