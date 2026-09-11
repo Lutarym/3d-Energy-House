@@ -11,7 +11,7 @@ Drehbare 3D-Darstellung eines Einfamilienhauses fuer Home Assistant, mit Etagen,
 - Grundriss-Bild als Vorlage, Raeume werden per Maus darauf aufgezogen
 - Etagen und Dach einzeln ausblendbar
 - Raeume nach Temperatur eingefaerbt
-- Beschriftung mit Raumname und Temperatur direkt im 3D-Modell, abschaltbar
+- Beschriftung mit Raumname und Temperatur flach auf dem Raumboden, dreht sich mit dem Haus, abschaltbar
 - Rueckblick: Schieberegler und Abspielen-Knopf fuer den Temperaturverlauf
 - Drehen per Maus, per Button oder automatisch, Zoom per Mausrad
 - Transparenz stufenlos einstellbar

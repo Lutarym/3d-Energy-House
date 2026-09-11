@@ -1,5 +1,5 @@
 const THREE_URL = 'https://unpkg.com/three@0.160.0/build/three.module.js';
-const VERSION = '2.9.0';
+const VERSION = '3.0.0';
 
 const ROOF_TYPES = [
   { value: 'flat',  label: 'Flachdach' },
@@ -342,6 +342,7 @@ class House3DCard extends HTMLElement {
             </div>
             <div style="position:absolute;bottom:10px;left:10px;right:10px;display:flex;flex-direction:column;gap:8px;z-index:5;">
               <div id="history-bar" style="display:none;align-items:center;gap:8px;background:rgba(13,15,20,0.85);border:1px solid #262a33;border-radius:8px;padding:6px 10px;">
+                <span id="hist-msg" style="display:none;font-size:11px;color:#f1c40f;line-height:1.4;"></span>
                 <button id="hist-play" title="Abspielen" style="width:30px;height:30px;flex-shrink:0;background:#1c2029;color:#fff;border:1px solid #333a46;border-radius:6px;cursor:pointer;font-size:12px;">&#9654;</button>
                 <input id="hist-slider" type="range" min="0" max="0" value="0" style="flex:1;cursor:pointer;">
                 <span id="hist-time" style="font-size:11px;color:#c8cfdb;white-space:nowrap;min-width:118px;text-align:right;font-variant-numeric:tabular-nums;">jetzt</span>
@@ -550,18 +551,51 @@ class House3DCard extends HTMLElement {
     return ids;
   }
 
+  histMessage(text) {
+    const bar = this.querySelector('#history-bar');
+    const msg = this.querySelector('#hist-msg');
+    if (!bar || !msg) return;
+
+    ['#hist-play', '#hist-slider', '#hist-time', '#hist-now'].forEach((id) => {
+      const el = this.querySelector(id);
+      if (el) el.style.display = text ? 'none' : '';
+    });
+
+    if (text) {
+      msg.style.display = 'block';
+      msg.textContent = text;
+      bar.style.display = 'flex';
+    } else {
+      msg.style.display = 'none';
+      bar.style.display = 'flex';
+    }
+  }
+
   async loadHistory() {
     const bar = this.querySelector('#history-bar');
     if (!bar) return;
 
     const hours = this.config.history.hours;
-    const ids = this.histEntities();
 
-    if (!hours || !ids.length || !this._hass || typeof this._hass.callWS !== 'function') {
+    // Ohne Zeitraum ist der Rueckblick bewusst abgeschaltet
+    if (!hours) {
       bar.style.display = 'none';
       this.histBuckets = [];
       return;
     }
+
+    const ids = this.histEntities();
+    if (!ids.length) {
+      this.histMessage('Rueckblick: kein Raum hat einen Temperatur-Sensor hinterlegt.');
+      return;
+    }
+
+    if (!this._hass || typeof this._hass.callWS !== 'function') {
+      this.histMessage('Rueckblick: keine Verbindung zur Historie moeglich.');
+      return;
+    }
+
+    this.histMessage('Rueckblick wird geladen ...');
 
     const end = new Date();
     const start = new Date(end.getTime() - hours * 3600 * 1000);
@@ -578,7 +612,13 @@ class House3DCard extends HTMLElement {
       });
     } catch (e) {
       console.warn('house-3d-card: Verlauf nicht abrufbar:', e);
-      bar.style.display = 'none';
+      this.histMessage('Rueckblick: Abruf fehlgeschlagen (' + (e && e.message ? e.message : 'unbekannter Fehler') + ').');
+      return;
+    }
+
+    const withData = ids.filter((id) => res && Array.isArray(res[id]) && res[id].length);
+    if (!withData.length) {
+      this.histMessage('Rueckblick: keine Langzeitstatistik vorhanden. Der Sensor braucht state_class measurement und darf im Recorder nicht ausgeschlossen sein.');
       return;
     }
 
@@ -599,7 +639,6 @@ class House3DCard extends HTMLElement {
           byTime[Math.floor(ts / step) * step] = row.mean;
         }
       });
-      // Luecken mit dem letzten bekannten Wert fuellen
       const arr = [];
       let lastVal = null;
       buckets.forEach((t) => {
@@ -612,11 +651,23 @@ class House3DCard extends HTMLElement {
     this.histBuckets = buckets;
     this.histValues = values;
 
+    if (buckets.length < 2) {
+      this.histMessage('Rueckblick: zu wenig Daten fuer den gewaehlten Zeitraum.');
+      return;
+    }
+
+    this.histMessage('');
+
     const slider = this.querySelector('#hist-slider');
     slider.min = '0';
-    slider.max = String(Math.max(0, buckets.length - 1));
+    slider.max = String(buckets.length - 1);
     slider.value = slider.max;
-    bar.style.display = buckets.length > 1 ? 'flex' : 'none';
+
+    const fehlend = ids.length - withData.length;
+    if (fehlend > 0) {
+      console.info('house-3d-card: ' + fehlend + ' Sensor(en) ohne Langzeitstatistik');
+    }
+
     this.setLive();
   }
 
@@ -855,9 +906,9 @@ class House3DCard extends HTMLElement {
         group.add(mesh);
         this.roomMeshes.push(mesh);
 
-        // Beschriftung mittig im Raum
-        const label = this.makeLabel(THREE, displayName(room, ri), this.labelTemp(fi, ri));
-        label.position.copy(mesh.position);
+        // Beschriftung flach auf dem Boden des Raumes
+        const label = this.makeLabel(THREE, displayName(room, ri), this.labelTemp(fi, ri), room.w, room.d);
+        label.position.set(mesh.position.x, baseY + 0.06, mesh.position.z);
         label.userData.fi = fi;
         label.userData.ri = ri;
         label.visible = this.labelsVisible;
@@ -918,31 +969,56 @@ class House3DCard extends HTMLElement {
     return fmtTemp(raw) + ' \u00b0C';
   }
 
-  makeLabel(THREE, name, temp) {
+  // Beschriftung liegt flach auf dem Boden des Raumes und dreht sich mit
+  labelSize(aspect, roomW, roomD) {
+    let h = Math.min(roomD * 0.55, 1.3);
+    let w = h * aspect;
+    const maxW = roomW * 0.88;
+    if (w > maxW) { w = maxW; h = w / aspect; }
+    return { w: w, h: h };
+  }
+
+  makeLabel(THREE, name, temp, roomW, roomD) {
     const made = makeLabelTexture(THREE, name, temp);
-    const mat = new THREE.SpriteMaterial({
+    const size = this.labelSize(made.aspect, roomW, roomD);
+
+    const mat = new THREE.MeshBasicMaterial({
       map: made.texture,
       transparent: true,
-      depthTest: false,
-      depthWrite: false
+      depthWrite: false,
+      side: THREE.DoubleSide
     });
-    const sprite = new THREE.Sprite(mat);
-    const h = temp ? 1.4 : 0.95;
-    sprite.scale.set(h * made.aspect, h, 1);
-    sprite.renderOrder = 20;
-    sprite.userData = { text: name + '|' + (temp || ''), isLabel: true };
-    return sprite;
+
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(size.w, size.h), mat);
+    plane.rotation.x = -Math.PI / 2;   // flach hinlegen
+    plane.renderOrder = 5;
+    plane.userData = {
+      text: name + '|' + (temp || ''),
+      isLabel: true,
+      roomW: roomW,
+      roomD: roomD,
+      aspect: made.aspect
+    };
+    return plane;
   }
 
   updateLabel(label, name, temp) {
     const key = name + '|' + (temp || '');
     if (label.userData.text === key) return;
+
     const made = makeLabelTexture(this.THREE, name, temp);
     if (label.material.map) label.material.map.dispose();
     label.material.map = made.texture;
     label.material.needsUpdate = true;
-    const h = temp ? 1.4 : 0.95;
-    label.scale.set(h * made.aspect, h, 1);
+
+    // Seitenverhaeltnis aendert sich, wenn die Temperatur dazukommt oder wegfaellt
+    if (made.aspect !== label.userData.aspect) {
+      const size = this.labelSize(made.aspect, label.userData.roomW, label.userData.roomD);
+      label.geometry.dispose();
+      label.geometry = new this.THREE.PlaneGeometry(size.w, size.h);
+      label.userData.aspect = made.aspect;
+    }
+
     label.userData.text = key;
   }
 
