@@ -5,7 +5,7 @@
  * offenen Fenstern, Sonnenstand, Energiefluss, fünf Darstellungen und Garten.
  */
 
-const VERSION = '4.4.0';
+const VERSION = '4.5.0';
 const CARD_TAG = 'house-3d-card';
 const EDITOR_TAG = 'house-3d-card-editor';
 
@@ -187,6 +187,10 @@ function clamp(v, min, max) {
 
 function round1(n) {
   return Math.round(n * 10) / 10;
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
 }
 
 function hasValue(v) {
@@ -455,7 +459,7 @@ const DEFAULT_CONFIG = () => ({
   house: { width: 12, depth: 10 },
   roof: { type: 'gable', height: 3, overhang: 0.4, axis: 'x' },
   outdoor: { temp_entity: '' },
-  orientation: { north: 0 },
+  orientation: {},
   energy: { pv_entity: '', pv_peak: 10, pv_faces: [], heatpump_entity: '', heatpump_side: 'right', wallbox_entity: '', wallbox_side: 'auto' },
   fluctuation: { hours: 24 },
   history: { hours: 0 },
@@ -919,7 +923,7 @@ function normalizeCardConfig(config) {
       axis: roof.axis === 'z' ? 'z' : 'x'
     },
     outdoor: { temp_entity: cleanEntity(c.outdoor && c.outdoor.temp_entity) },
-    orientation: { north: ((clampNum(c.orientation && c.orientation.north, -3600, 3600, 0) % 360) + 360) % 360 },
+    orientation: normalizeOrientation(c.orientation),
     energy: {
       pv_entity: cleanEntity(en.pv_entity),
       pv_peak: clampNum(en.pv_peak, 0.1, 10000, 10),
@@ -933,6 +937,19 @@ function normalizeCardConfig(config) {
     history: { hours: Math.round(clampNum(c.history && c.history.hours, 0, 26280, 0)) },
     floors: floors
   };
+}
+
+// Norden: Winkel des Nordpfeils im Grundriss, im Uhrzeigersinn ab oben.
+// Ältere Fassungen speicherten die Himmelsrichtung der oberen Kante als north.
+// Deren Standardwert 0 setzte der Editor ungefragt, er gilt deshalb nicht.
+// north im Ergebnis ist weiterhin die Himmelsrichtung der oberen Kante.
+function normalizeOrientation(o) {
+  const src = (o && typeof o === 'object') ? o : {};
+  const mod = (v) => ((v % 360) + 360) % 360;
+  let arrow = null;
+  if (hasValue(src.north_arrow)) arrow = mod(parseFloat(src.north_arrow));
+  else if (hasValue(src.north) && mod(parseFloat(src.north)) !== 0) arrow = mod(360 - parseFloat(src.north));
+  return { set: arrow !== null, arrow: arrow, north: arrow === null ? 0 : mod(360 - arrow) };
 }
 
 /* ========================== Dach-Geometrie ========================== */
@@ -1188,16 +1205,21 @@ house-3d-card { display: block; }
 house-3d-card.h3d-fill { height: 100%; }
 house-3d-card ha-card { overflow: hidden; display: flex; flex-direction: column; }
 house-3d-card.h3d-fill ha-card { height: 100%; }
+house-3d-card.h3d-tall ha-card {
+  height: calc(100vh - var(--header-height, 56px) - var(--safe-area-inset-top, 0px) - 32px);
+  height: calc(100dvh - var(--header-height, 56px) - var(--safe-area-inset-top, 0px) - 32px);
+  min-height: 420px;
+}
 house-3d-card .h3d-title { padding: 14px 16px 10px; font-size: 16px; font-weight: 600; }
 house-3d-card .h3d-root { position: relative; display: flex; height: 620px; background: #12141a; color: #e9edf3; font-size: 13px; }
-house-3d-card.h3d-fill .h3d-root { height: auto; flex: 1 1 auto; min-height: 300px; }
+house-3d-card.h3d-fill .h3d-root, house-3d-card.h3d-tall .h3d-root { height: auto; flex: 1 1 auto; min-height: 300px; }
 house-3d-card .h3d-stage { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; }
 house-3d-card .h3d-canvas { position: absolute; inset: 0; }
 house-3d-card .h3d-canvas canvas { display: block; touch-action: none; cursor: grab; outline: none; -webkit-tap-highlight-color: transparent; }
 house-3d-card .h3d-info { flex: 0 0 230px; width: 230px; box-sizing: border-box; background: #0d0f14; border-left: 1px solid #262a33; padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 house-3d-card .h3d-root.h3d-narrow { flex-direction: column; height: auto; }
 house-3d-card .h3d-root.h3d-narrow .h3d-stage { flex: 0 0 auto; height: 420px; }
-house-3d-card.h3d-fill .h3d-root.h3d-narrow .h3d-stage { flex: 1 1 auto; height: auto; min-height: 240px; }
+house-3d-card.h3d-fill .h3d-root.h3d-narrow .h3d-stage, house-3d-card.h3d-tall .h3d-root.h3d-narrow .h3d-stage { flex: 1 1 auto; height: auto; min-height: 240px; }
 house-3d-card .h3d-root.h3d-narrow .h3d-info { flex: 0 0 auto; width: auto; border-left: 0; border-top: 1px solid #262a33; max-height: 320px; }
 house-3d-card .h3d-btn { height: 32px; min-width: 32px; padding: 0 10px; box-sizing: border-box; background: #1c2029; color: #fff; border: 1px solid #333a46; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; line-height: 1; white-space: nowrap; }
 house-3d-card .h3d-btn:hover { background: #252b37; }
@@ -1340,7 +1362,7 @@ class House3DCard extends HTMLElement {
     this.styleName = cfg.style;
     this._entityIds = this.collectEntities();
     this._statIds = this.collectStatEntities();
-    this.classList.toggle('h3d-fill', cfg.fill);
+    this.applySizing();
     if (!this._built) return;
 
     this.stopPlay();
@@ -1388,12 +1410,50 @@ class House3DCard extends HTMLElement {
   }
 
   getCardSize() {
-    return 13;
+    if (this._preview) return 13;
+    return Math.max(9, Math.round(((window.innerHeight || 800) - 90) / 50));
   }
 
-  // Abschnittsansicht: ganze Breite, Zeilen frei wählbar
+  // Abschnittsansicht: ganze Breite des Abschnitts, Zeilen frei wählbar
   getGridOptions() {
-    return { columns: 12, min_columns: 6, min_rows: 6 };
+    return { columns: 'full', min_columns: 6, min_rows: 6 };
+  }
+
+  // Home Assistant meldet, wo die Karte steht: panel, grid oder nichts für Masonry.
+  // In der Panel-Ansicht füllt sie die ganze Fläche, sonst die sichtbare Höhe.
+  set layout(v) {
+    this._layout = v;
+    this.applySizing();
+  }
+
+  get layout() {
+    return this._layout;
+  }
+
+  set isPanel(v) {
+    this._isPanel = !!v;
+    this.applySizing();
+  }
+
+  get isPanel() {
+    return !!this._isPanel;
+  }
+
+  // Vorschau im Karteneditor und Bearbeitungsmodus: feste, handliche Höhe
+  set preview(v) {
+    this._preview = !!v;
+    this.applySizing();
+  }
+
+  get preview() {
+    return !!this._preview;
+  }
+
+  applySizing() {
+    const panel = this._layout === 'panel' || !!this._isPanel;
+    const fill = panel || !!(this.config && this.config.fill);
+    this.classList.toggle('h3d-fill', fill);
+    this.classList.toggle('h3d-tall', !fill && !this._preview);
   }
 
   connectedCallback() {
@@ -2477,7 +2537,7 @@ class House3DCard extends HTMLElement {
   }
 
   disposeHouse() {
-    [...this.floorGroups, this.roofGroup, this.outdoorMesh, this.compassGroup, this.sunMesh, this.energyGroup,
+    [...this.floorGroups, this.roofGroup, this.outdoorMesh, this.compassGroup, this.energyGroup,
       this.moonMesh, this._envGroup].forEach((g) => { if (g) this.disposeObject(g); });
     this.moonMesh = null;
     this._envGroup = null;
@@ -2497,7 +2557,6 @@ class House3DCard extends HTMLElement {
     this.flows = [];
     this._energyObjs = {};
     this.compassGroup = null;
-    this.sunMesh = null;
     this.floorGroups = [];
     this.roomMeshes = [];
     this.slabMeshes = [];
@@ -2689,12 +2748,7 @@ class House3DCard extends HTMLElement {
     this._scene.add(compass);
     this.compassGroup = compass;
 
-    // Sonne als leuchtende Kugel, Lage nach Uhrzeit und Standort
-    const sun = new THREE.Mesh(new THREE.SphereGeometry(clamp(ext * 0.035, 0.35, 1.2), 24, 16),
-      new THREE.MeshBasicMaterial({ color: 0xffd54a }));
-    sun.visible = false;
-    this._scene.add(sun);
-    this.sunMesh = sun;
+    // Die Sonne selbst wird nicht gezeichnet, nur ihr Licht
     this._sunT = 0;
 
     // Mond als Scheibe mit Phase, etwas größer als die Sonne
@@ -3166,7 +3220,7 @@ class House3DCard extends HTMLElement {
     const m = this.moonMesh;
     if (!m) return null;
     const mp = this.moonAt(t);
-    const show = !!mp && this.sunVisible && mp.elevation > -1;
+    const show = !!mp && this.sunVisible && this.config.orientation.set && mp.elevation > -1;
     m.visible = show;
     if (!mp) return null;
     const dir = compassToScene(mp.azimuth, mp.elevation, this.config.orientation.north);
@@ -3966,6 +4020,11 @@ class House3DCard extends HTMLElement {
 
     const faces = this.roofFaces(roofMesh, rw, rd);
     let use = faces.filter((f) => chosen.indexOf(f.side) >= 0);
+    if (!use.length && !this.config.orientation.set) {
+      // Ohne Norden keine Himmelsrichtung, dann die Fläche nach unten im Grundriss
+      use = faces.filter((f) => f.side === 'bottom');
+      if (!use.length) use = [faces[0]];
+    }
     if (!use.length) {
       const want = this.southern() ? 0 : 180;
       const north = this.config.orientation.north;
@@ -4212,7 +4271,7 @@ class House3DCard extends HTMLElement {
     if (this.roofGroup) this.roofGroup.visible = !this.roofHidden;
     this.labels.forEach((l) => { l.visible = this.labelsVisible; });
     if (this.outdoorMesh) this.outdoorMesh.visible = this.outdoorVisible;
-    if (this.compassGroup) this.compassGroup.visible = this.sunVisible;
+    if (this.compassGroup) this.compassGroup.visible = this.sunVisible && this.config.orientation.set;
     if (this.energyGroup) this.energyGroup.visible = this.energyVisible;
     if (this._gardenGroup) this._gardenGroup.visible = this.gardenVisible;
     this.paintGround();
@@ -4239,7 +4298,7 @@ class House3DCard extends HTMLElement {
   }
 
   updateSun(ms, force) {
-    if (!this._ready3D || !this.sunMesh || !this._sunLight) return;
+    if (!this._ready3D || !this._houseBounds || !this.compassGroup || !this._sunLight) return;
     const t = ms || Date.now();
     if (!force && Math.abs(t - (this._sunT || 0)) < 60000) return;
     this._sunT = t;
@@ -4256,7 +4315,6 @@ class House3DCard extends HTMLElement {
     this.applyTimeOfDay(at ? at.elevation : null, t);
     const amb = this._ambient;
     if (!pos) {
-      this.sunMesh.visible = false;
       light.position.set(cx + 20, cy + 30, cz + 16);
       light.intensity = 1.3;
       light.color.setHex(0xffffff);
@@ -4267,13 +4325,16 @@ class House3DCard extends HTMLElement {
       this.requestRender();
       return;
     }
-    const dir = compassToScene(pos.azimuth, pos.elevation, this.config.orientation.north);
-    this.sunMesh.position.set(cx + dir.x * R, cy + dir.y * R, cz + dir.z * R);
-    this.sunMesh.visible = pos.elevation > -1;
     if (pos.elevation > 0) {
-      // Tief stehende Sonne färbt das Licht warm
+      // Licht aus Richtung der Sonne, ohne festgelegten Norden von schräg vorn.
+      // Tief stehende Sonne färbt das Licht warm.
       const warm = clamp(pos.elevation / 14, 0, 1);
-      light.position.copy(this.sunMesh.position);
+      if (this.config.orientation.set) {
+        const dir = compassToScene(pos.azimuth, pos.elevation, this.config.orientation.north);
+        light.position.set(cx + dir.x * R, cy + dir.y * R, cz + dir.z * R);
+      } else {
+        light.position.set(cx + 20, cy + 30, cz + 16);
+      }
       light.intensity = 0.5 + 1.1 * Math.sin(pos.elevation * Math.PI / 180);
       light.color.setHex(mixColor(0xff9a52, 0xffffff, warm));
       if (amb) {
@@ -4788,6 +4849,41 @@ const SECTION_CSS =
 
 const HINT_CSS = 'font-size:11px;color:var(--secondary-text-color);line-height:1.4;';
 
+// Arbeitsbereich für Grundriss und Räume. Mit der Klasse full füllt er den
+// Bildschirm, der Plan wird groß und die Raumdaten stehen rechts daneben.
+const EDITOR_CSS = `
+.h3e-ws { display: flex; flex-direction: column; gap: 10px; }
+.h3e-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.h3e-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.h3e-b { padding: 7px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color); font: inherit; font-size: 13px; line-height: 1.2; }
+.h3e-b:disabled { opacity: .4; cursor: default; }
+.h3e-b.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color); font-weight: 600; }
+.h3e-danger { color: var(--error-color, #c0392b); align-self: flex-start; }
+.h3e-main { display: flex; flex-direction: column; gap: 14px; }
+.h3e-plan { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.h3e-cwrap { position: relative; }
+#plan-canvas { display: block; width: 100%; box-sizing: border-box; border: 1px solid var(--divider-color); border-radius: 6px; background: #15181f; touch-action: none; outline: none; cursor: crosshair; }
+#plan-canvas:focus-visible { border-color: var(--primary-color); }
+.h3e-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.h3e-box { display: flex; flex-direction: column; gap: 10px; }
+.h3e-head { font-size: 13px; font-weight: 600; }
+.h3e-hint { font-size: 11px; color: var(--secondary-text-color); line-height: 1.4; }
+.h3e-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.h3e-lab { font-size: 12px; color: var(--secondary-text-color); }
+.h3e-sel { padding: 7px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color, #fff); color: var(--primary-text-color); font: inherit; font-size: 13px; }
+.h3e-ws.full { position: fixed; inset: 0; z-index: 99; margin: 0; padding: 12px; box-sizing: border-box; overflow: hidden; background: var(--card-background-color, var(--primary-background-color, #1c1c1c)); color: var(--primary-text-color); }
+.h3e-ws.full .h3e-main { flex: 1 1 auto; min-height: 0; flex-direction: row; }
+.h3e-ws.full .h3e-plan { flex: 1 1 auto; min-height: 0; }
+.h3e-ws.full .h3e-cwrap { flex: 1 1 auto; min-height: 0; }
+.h3e-ws.full #plan-canvas { position: absolute; inset: 0; height: 100%; }
+.h3e-ws.full .h3e-side { flex: 0 0 360px; max-width: 42%; overflow-y: auto; padding-right: 4px; }
+@media (max-width: 700px) {
+  .h3e-ws.full .h3e-main { flex-direction: column; }
+  .h3e-ws.full .h3e-plan { flex: 1 1 55%; }
+  .h3e-ws.full .h3e-side { flex: 1 1 45%; max-width: none; }
+}
+`;
+
 function fieldHtml(id, label, type, extra) {
   return '<label style="' + LABEL_CSS + '" for="' + id + '">' + label + '</label>' +
          '<input id="' + id + '" type="' + (type || 'text') + '" ' + (extra || '') +
@@ -4814,6 +4910,13 @@ function paintToggle(b, active) {
   b.style.background = active ? 'var(--primary-color)' : 'transparent';
   b.style.color = active ? 'var(--text-primary-color)' : 'var(--primary-text-color)';
   b.style.fontWeight = active ? '600' : '400';
+}
+
+// Für den Editor: nur north_arrow. Die ältere Angabe north wird umgerechnet,
+// ihr früherer Standardwert 0 gilt als nicht festgelegt.
+function editorOrientation(o) {
+  const n = normalizeOrientation(o);
+  return n.set ? { north_arrow: Math.round(n.arrow * 10) / 10 } : {};
 }
 
 function typeFieldValue(type) {
@@ -4850,9 +4953,7 @@ class House3DCardEditor extends HTMLElement {
       outdoor: {
         temp_entity: (c.outdoor && typeof c.outdoor.temp_entity === 'string') ? c.outdoor.temp_entity : ''
       },
-      orientation: {
-        north: (c.orientation && c.orientation.north !== undefined) ? c.orientation.north : 0
-      },
+      orientation: editorOrientation(c.orientation),
       energy: {
         pv_entity: str(en.pv_entity),
         pv_peak: en.pv_peak !== undefined ? en.pv_peak : 10,
@@ -4884,6 +4985,9 @@ class House3DCardEditor extends HTMLElement {
     if (this._config && stableStringify(next) === stableStringify(this._config)) return;
 
     this._config = next;
+    if (this._magnet === undefined) this._magnet = true;
+    // Von außen geändert, etwa im Code-Editor: der Verlauf passt nicht mehr
+    this._histReset();
 
     const maxFloor = this._config.floors.length - 1;
     if (typeof this._activeFloor !== 'number' || this._activeFloor > maxFloor) this._activeFloor = 0;
@@ -4910,10 +5014,19 @@ class House3DCardEditor extends HTMLElement {
   connectedCallback() {
     const cv = this.querySelector('#plan-canvas');
     if (this._cvRo && cv) this._cvRo.observe(cv);
+    if (!this._onFs) this._onFs = () => this._fsChanged();
+    document.addEventListener('fullscreenchange', this._onFs);
+    document.addEventListener('webkitfullscreenchange', this._onFs);
   }
 
   disconnectedCallback() {
     if (this._cvRo) this._cvRo.disconnect();
+    if (this._onFs) {
+      document.removeEventListener('fullscreenchange', this._onFs);
+      document.removeEventListener('webkitfullscreenchange', this._onFs);
+    }
+    if (this._full) this._setFull(false);
+    this._flushFire();
   }
 
   _fire() {
@@ -4922,8 +5035,11 @@ class House3DCardEditor extends HTMLElement {
     // verändert. Beim nächsten Senden fände es keinen Unterschied und
     // verwürfe die Änderung.
     try {
+      const out = JSON.parse(JSON.stringify(this._config));
+      // Norden nicht festgelegt: gar keine Angabe statt eines leeren Eintrags
+      if (out.orientation && !Object.keys(out.orientation).length) delete out.orientation;
       this.dispatchEvent(new CustomEvent('config-changed', {
-        detail: { config: JSON.parse(JSON.stringify(this._config)) },
+        detail: { config: out },
         bubbles: true,
         composed: true
       }));
@@ -4946,6 +5062,7 @@ class House3DCardEditor extends HTMLElement {
 
     const btn = 'padding:8px;border-radius:6px;cursor:pointer;';
     this.innerHTML = `
+      <style>${EDITOR_CSS}</style>
       <div style="display:flex;flex-direction:column;gap:18px;padding:8px 0;">
 
         <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--secondary-text-color);">
@@ -4976,19 +5093,6 @@ class House3DCardEditor extends HTMLElement {
           <div style="font-weight:600;">Außentemperatur</div>
           <div id="outdoor-field"></div>
           <div style="${HINT_CSS}">Sensor oder Wetter-Entität. Erscheint rechts im Infofeld und als Tafel vor dem Haus.</div>
-        </div>
-
-        <div style="${SECTION_CSS}">
-          <div style="font-weight:600;">Ausrichtung für Nordpfeil und Sonne</div>
-          <div style="font-size:12px;color:var(--secondary-text-color);">Die obere Kante des Grundrisses zeigt nach</div>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">
-            <button type="button" class="north-btn" data-north="0" style="${btn}">Norden</button>
-            <button type="button" class="north-btn" data-north="90" style="${btn}">Osten</button>
-            <button type="button" class="north-btn" data-north="180" style="${btn}">Süden</button>
-            <button type="button" class="north-btn" data-north="270" style="${btn}">Westen</button>
-          </div>
-          <div>${fieldHtml('f-north', 'oder genau in Grad, im Uhrzeigersinn ab Norden', 'number', 'step="1" min="0" max="359"')}</div>
-          <div style="${HINT_CSS}">Der Sonnenstand wird aus dem Standort in Home Assistant und der Uhrzeit berechnet, im Rückblick passend zum gewählten Zeitpunkt.</div>
         </div>
 
         <div style="${SECTION_CSS}">
@@ -5049,44 +5153,64 @@ class House3DCardEditor extends HTMLElement {
         </div>
 
         <div style="${SECTION_CSS}">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div style="font-weight:600;">Etagen</div>
-            <div style="display:flex;gap:6px;">
-              <button id="floor-add" type="button" style="padding:6px 10px;border-radius:6px;cursor:pointer;">+ Etage</button>
-              <button id="floor-del" type="button" style="padding:6px 10px;border-radius:6px;cursor:pointer;">Etage entfernen</button>
+          <div style="font-weight:600;">Grundriss, Räume und Norden</div>
+          <div id="ws" class="h3e-ws">
+            <div class="h3e-bar">
+              <div id="floor-tabs" class="h3e-tabs"></div>
+              <button id="floor-add" type="button" class="h3e-b">+ Etage</button>
+              <button id="full-btn" type="button" class="h3e-b" style="margin-left:auto;">Vollbild</button>
             </div>
-          </div>
-          <div id="floor-tabs" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
-
-          <div style="display:flex;gap:12px;">
-            <div style="flex:2;">${fieldHtml('f-floor-name', 'Bezeichnung', 'text')}</div>
-            <div style="flex:1;">${fieldHtml('f-floor-h', 'Höhe in m', 'number', 'step="0.1" min="1.5" max="6"')}</div>
-          </div>
-
-          <div>${fieldHtml('f-plan', 'Grundriss-Bild, z.B. /local/grundriss_eg.png', 'text')}</div>
-          <div style="${HINT_CSS}margin-top:-6px;">Bild nach /config/www/ legen und hier als /local/dateiname.png eintragen.</div>
-
-          <div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-              <div style="font-size:12px;color:var(--secondary-text-color);">Räume aufziehen</div>
-              <div style="display:flex;gap:6px;">
-                <button id="room-add" type="button" style="padding:6px 10px;border-radius:6px;cursor:pointer;">+ Raum</button>
-                <button id="annex-add" type="button" style="padding:6px 10px;border-radius:6px;cursor:pointer;">+ Anbau</button>
+            <div class="h3e-bar">
+              <button id="room-add" type="button" class="h3e-b">+ Raum</button>
+              <button id="annex-add" type="button" class="h3e-b">+ Anbau</button>
+              <button id="undo-btn" type="button" class="h3e-b" title="Rückgängig, Strg+Z">&#8630; Rückgängig</button>
+              <button id="redo-btn" type="button" class="h3e-b" title="Wiederholen, Strg+Y">&#8631; Wiederholen</button>
+              <button id="magnet-btn" type="button" class="h3e-b" title="Kanten rasten an Nachbarräumen und am Hausrand ein">Magnet</button>
+            </div>
+            <div class="h3e-main">
+              <div class="h3e-plan">
+                <div class="h3e-cwrap"><canvas id="plan-canvas" tabindex="0" aria-label="Grundriss"></canvas></div>
+                <div class="h3e-hint">
+                  Raum ziehen verschiebt ihn, die Anfasser an Kanten und Ecken ändern die Größe, in freier Fläche aufziehen legt einen neuen Raum an.
+                  Pfeiltasten verschieben um 10 cm, mit Umschalt um 1 m. Entf löscht, Strg+Z macht rückgängig, Strg+Y wiederholt.
+                </div>
+              </div>
+              <div class="h3e-side">
+                <div class="h3e-box">
+                  <div class="h3e-head">Norden</div>
+                  <div>${fieldHtml('f-north', 'Nordpfeil in Grad, im Uhrzeigersinn ab oben', 'number', 'step="1" min="0" max="359" placeholder="nicht festgelegt"')}</div>
+                  <div class="h3e-hint">Den Pfeil oben rechts im Plan in Richtung Norden ziehen. Ohne Angabe gibt es keinen Nordpfeil und keinen Mond, das Licht fällt dann von schräg vorn.</div>
+                </div>
+                <div class="h3e-box">
+                  <div class="h3e-head">Etage</div>
+                  <div style="display:flex;gap:10px;">
+                    <div style="flex:2;">${fieldHtml('f-floor-name', 'Bezeichnung', 'text')}</div>
+                    <div style="flex:1;">${fieldHtml('f-floor-h', 'Höhe in m', 'number', 'step="0.1" min="1.5" max="6"')}</div>
+                  </div>
+                  <div>${fieldHtml('f-plan', 'Grundriss-Bild, z.B. /local/grundriss_eg.png', 'text')}</div>
+                  <div class="h3e-hint">Bild nach /config/www/ legen und hier als /local/dateiname.png eintragen.</div>
+                  <div id="copy-row" class="h3e-row">
+                    <label for="copy-src" class="h3e-lab">Räume übernehmen von</label>
+                    <select id="copy-src" class="h3e-sel"></select>
+                    <button id="copy-btn" type="button" class="h3e-b">Übernehmen</button>
+                  </div>
+                  <div id="copy-ask" class="h3e-row" style="display:none;">
+                    <span class="h3e-lab">Diese Etage hat schon Räume.</span>
+                    <button id="copy-replace" type="button" class="h3e-b">Ersetzen</button>
+                    <button id="copy-append" type="button" class="h3e-b">Ergänzen</button>
+                    <button id="copy-cancel" type="button" class="h3e-b">Abbrechen</button>
+                  </div>
+                  <div id="copy-hint" class="h3e-hint">Übernimmt Lage, Größe und Typ der Räume, ohne Namen, Farbe und Sensoren.</div>
+                  <button id="floor-del" type="button" class="h3e-b h3e-danger">Etage entfernen</button>
+                </div>
+                <div class="h3e-box">
+                  <div class="h3e-head">Räume dieser Etage</div>
+                  <div id="room-list" style="display:flex;flex-direction:column;gap:4px;"></div>
+                </div>
+                <div id="room-editor" class="h3e-box"></div>
               </div>
             </div>
-            <canvas id="plan-canvas" style="width:100%;border:1px solid var(--divider-color);border-radius:6px;background:#1b1f27;cursor:crosshair;touch-action:none;display:block;"></canvas>
-            <div style="${HINT_CSS}margin-top:6px;">
-              Rechteck ziehen zum Verschieben, Ecke unten rechts zum Skalieren.
-              Anbauten gehören außerhalb des gestrichelten Rahmens.
-            </div>
           </div>
-
-          <div>
-            <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Räume dieser Etage</div>
-            <div id="room-list" style="display:flex;flex-direction:column;gap:4px;"></div>
-          </div>
-
-          <div id="room-editor" style="border-top:1px solid var(--divider-color);padding-top:12px;display:flex;flex-direction:column;gap:10px;"></div>
         </div>
 
       </div>
@@ -5126,19 +5250,6 @@ class House3DCardEditor extends HTMLElement {
     numField('#f-roof-oh', 0,   2,     0.4, (v) => { this._config.roof.overhang = v; });
     numField('#f-hist',    0,   26280, 0,   (v) => { this._config.history.hours = Math.round(v); });
     numField('#f-fluct',   0,   8760,  24,  (v) => { this._config.fluctuation.hours = Math.round(v); });
-    numField('#f-north',   0,   359,   0,   (v) => {
-      this._config.orientation.north = Math.round(v) % 360;
-      this._buildPvFaces();
-    });
-
-    this.querySelectorAll('.north-btn').forEach((b) => {
-      b.addEventListener('click', () => {
-        this._config.orientation.north = parseInt(b.dataset.north, 10);
-        this._refresh();
-        this._fire();
-      });
-    });
-
     this._outdoorEl = this._sensorField(
       this.querySelector('#outdoor-field'), 'Außentemperatur-Sensor (optional)', 'out',
       () => this._config.outdoor.temp_entity,
@@ -5224,55 +5335,102 @@ class House3DCardEditor extends HTMLElement {
       });
     });
 
-    this.querySelector('#floor-add').addEventListener('click', () => {
+    this._bindWorkspace();
+
+    this._setupCanvas();
+    this._refresh();
+  }
+
+  // Werkzeugleiste, Etagenfelder, Norden und Kopieren im Arbeitsbereich
+  _bindWorkspace() {
+    const q = (id) => this.querySelector(id);
+    q('#ws').addEventListener('keydown', (e) => this._onKey(e));
+
+    q('#floor-add').addEventListener('click', () => {
       if (this._config.floors.length >= 5) return;
       this._config.floors.push({ name: 'Etage ' + (this._config.floors.length + 1), height: 2.5, floorplan: '', rooms: [] });
       this._activeFloor = this._config.floors.length - 1;
       this._selRoom = null;
       this._refresh();
+      this._commit();
       this._fire();
     });
 
-    this.querySelector('#floor-del').addEventListener('click', () => {
+    q('#floor-del').addEventListener('click', () => {
       if (this._config.floors.length <= 1) return;
       this._config.floors.splice(this._activeFloor, 1);
       this._activeFloor = Math.max(0, this._activeFloor - 1);
       this._selRoom = null;
       this._refresh();
+      this._commit();
       this._fire();
     });
 
-    this.querySelector('#f-floor-name').addEventListener('input', (e) => {
+    q('#f-floor-name').addEventListener('input', (e) => {
       this._config.floors[this._activeFloor].name = e.target.value;
       this._buildFloorTabs();
+      this._buildCopyRow();
       this._fire();
     });
+    q('#f-floor-name').addEventListener('change', () => this._commit());
 
-    this.querySelector('#f-floor-h').addEventListener('input', (e) => {
+    q('#f-floor-h').addEventListener('input', (e) => {
       const v = parseFloat(e.target.value);
       if (isNaN(v)) return;
       this._config.floors[this._activeFloor].height = Math.min(6, Math.max(0.5, v));
       this._fire();
     });
-
-    this.querySelector('#f-floor-h').addEventListener('change', (e) => {
+    q('#f-floor-h').addEventListener('change', (e) => {
       const v = clampNum(e.target.value, 1.5, 6, 2.6);
       this._config.floors[this._activeFloor].height = v;
       e.target.value = v;
+      this._commit();
       this._fire();
     });
 
-    this.querySelector('#f-plan').addEventListener('input', (e) => {
+    q('#f-plan').addEventListener('input', (e) => {
       this._config.floors[this._activeFloor].floorplan = e.target.value.trim();
       this._loadPlanImage();
       this._fire();
     });
+    q('#f-plan').addEventListener('change', () => this._commit());
 
-    this.querySelector('#room-add').addEventListener('click', () => this._addRoom('room'));
-    this.querySelector('#annex-add').addEventListener('click', () => this._addRoom('annex'));
+    q('#room-add').addEventListener('click', () => this._addRoom('room'));
+    q('#annex-add').addEventListener('click', () => this._addRoom('annex'));
+    q('#undo-btn').addEventListener('click', () => this._undoStep());
+    q('#redo-btn').addEventListener('click', () => this._redoStep());
+    q('#magnet-btn').addEventListener('click', () => {
+      this._magnet = !this._magnet;
+      this._paintToolBtns();
+    });
+    q('#full-btn').addEventListener('click', () => this._setFull(!this._full));
 
-    this._setupCanvas();
-    this._refresh();
+    q('#f-north').addEventListener('input', (e) => {
+      const t = String(e.target.value).trim();
+      if (t === '') {
+        this._config.orientation = {};
+      } else {
+        const v = parseFloat(t);
+        if (isNaN(v)) return;
+        this._config.orientation = { north_arrow: ((Math.round(v) % 360) + 360) % 360 };
+      }
+      this._buildPvFaces();
+      this._drawPlan();
+      this._fireSoon();
+    });
+    q('#f-north').addEventListener('change', () => {
+      this._syncNorthField(true);
+      this._flushFire();
+      this._commit();
+    });
+
+    q('#copy-btn').addEventListener('click', () => {
+      if (this._config.floors[this._activeFloor].rooms.length) q('#copy-ask').style.display = '';
+      else this._copyFloor('replace');
+    });
+    q('#copy-replace').addEventListener('click', () => this._copyFloor('replace'));
+    q('#copy-append').addEventListener('click', () => this._copyFloor('append'));
+    q('#copy-cancel').addEventListener('click', () => { q('#copy-ask').style.display = 'none'; });
   }
 
   // Knöpfe für die Dachflächen der aktuellen Dachform, beschriftet mit der
@@ -5283,15 +5441,17 @@ class House3DCardEditor extends HTMLElement {
     const cfg = this._config;
     const en = cfg.energy;
     if (!Array.isArray(en.pv_faces)) en.pv_faces = cleanList(en.pv_faces);
-    const north = Number(cfg.orientation.north) || 0;
+    const ori = normalizeOrientation(cfg.orientation);
     box.innerHTML = '';
     pvSidesFor(cfg.roof).forEach((side) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'pv-face-btn';
       b.dataset.side = side;
-      const sideLabel = SIDES.find((x) => x.value === side).label.toLowerCase();
-      b.innerHTML = compassName(north + SIDE_AZ[side]) + '<br><span style="font-size:11px;opacity:.75;">' + sideLabel + '</span>';
+      const sideLabel = SIDES.find((x) => x.value === side).label;
+      b.innerHTML = ori.set
+        ? compassName(ori.north + SIDE_AZ[side]) + '<br><span style="font-size:11px;opacity:.75;">' + sideLabel.toLowerCase() + '</span>'
+        : sideLabel;
       b.style.cssText = 'padding:6px 4px;border-radius:6px;cursor:pointer;line-height:1.3;font-family:inherit;';
       paintToggle(b, en.pv_faces.indexOf(side) >= 0);
       b.addEventListener('click', () => {
@@ -5310,7 +5470,7 @@ class House3DCardEditor extends HTMLElement {
     } else if (cfg.roof.type === 'mono') {
       hint.textContent = 'Das Pultdach hat nur eine Fläche.';
     } else {
-      hint.textContent = 'Mehrere Flächen sind möglich, etwa Ost und West. Ohne Auswahl die Fläche, die am meisten nach Süden zeigt. Die Himmelsrichtung folgt aus der Ausrichtung oben.';
+      hint.textContent = 'Mehrere Flächen sind möglich, etwa Ost und West. Ohne Auswahl die Fläche, die am meisten nach Süden zeigt, ohne festgelegten Norden die untere. Die Himmelsrichtungen folgen aus dem Nordpfeil im Grundriss.';
     }
   }
 
@@ -5325,6 +5485,7 @@ class House3DCardEditor extends HTMLElement {
       picker.value = get() || '';
       picker.addEventListener('value-changed', (e) => {
         set(e.detail.value || '');
+        this._commit();
         this._fire();
       });
       container.appendChild(picker);
@@ -5340,6 +5501,7 @@ class House3DCardEditor extends HTMLElement {
       set(e.target.value.trim());
       this._fire();
     });
+    inp.addEventListener('change', () => this._commit());
     container.appendChild(wrap);
     return inp;
   }
@@ -5362,6 +5524,7 @@ class House3DCardEditor extends HTMLElement {
         const v = e.detail.value;
         room.contacts = Array.isArray(v) ? v.filter((x) => x) : (v ? [v] : []);
         this._buildRoomList();
+        this._commit();
         this._fire();
       });
       wrap.appendChild(picker);
@@ -5390,6 +5553,7 @@ class House3DCardEditor extends HTMLElement {
           room.contacts[i] = e.target.value.trim();
           this._fire();
         });
+        inp.addEventListener('change', () => this._commit());
         const del = document.createElement('button');
         del.type = 'button';
         del.className = 'contact-del';
@@ -5399,6 +5563,7 @@ class House3DCardEditor extends HTMLElement {
           room.contacts.splice(i, 1);
           render();
           this._buildRoomList();
+          this._commit();
           this._fire();
         });
         row.appendChild(inp);
@@ -5502,10 +5667,22 @@ class House3DCardEditor extends HTMLElement {
 
     f.rooms.push({ name: '', type: type, x: spot.x, z: spot.z, w: w, d: d, temp_entity: '', hum_entity: '', contacts: [] });
     this._selRoom = f.rooms.length - 1;
-    this._buildRoomList();
-    this._buildRoomEditor(true);
-    this._drawPlan();
-    this._fire();
+    this._afterRoomChange(true);
+  }
+
+  // Neuer Raum aus einem aufgezogenen Rechteck. Liegt er ganz außerhalb des
+  // Hauptbaukörpers, wird er als Anbau angelegt.
+  _addRoomAt(rect) {
+    const f = this._config.floors[this._activeFloor];
+    const W = this._config.house.width, D = this._config.house.depth;
+    const inside = rect.x < W && rect.x + rect.w > 0 && rect.z < D && rect.z + rect.d > 0;
+    f.rooms.push({
+      name: '', type: inside ? 'room' : 'annex',
+      x: round2(rect.x), z: round2(rect.z), w: round2(rect.w), d: round2(rect.d),
+      temp_entity: '', hum_entity: '', contacts: []
+    });
+    this._selRoom = f.rooms.length - 1;
+    this._afterRoomChange(true);
   }
 
   _deleteRoom(index) {
@@ -5514,9 +5691,27 @@ class House3DCardEditor extends HTMLElement {
     f.rooms.splice(index, 1);
     if (this._selRoom === index) this._selRoom = null;
     else if (this._selRoom !== null && this._selRoom > index) this._selRoom--;
+    this._afterRoomChange(true);
+  }
+
+  _duplicateRoom(index) {
+    const f = this._config.floors[this._activeFloor];
+    const room = f.rooms[index];
+    if (!room) return;
+    const copy = JSON.parse(JSON.stringify(room));
+    copy.x = round2(Math.min(room.x + 1, 60 - room.w));
+    copy.z = round2(Math.min(room.z + 1, 60 - room.d));
+    f.rooms.push(copy);
+    this._selRoom = f.rooms.length - 1;
+    this._afterRoomChange(true);
+  }
+
+  // Liste, Felder und Plan nachziehen, Schritt merken und übergeben
+  _afterRoomChange(rebuildEditor) {
     this._buildRoomList();
-    this._buildRoomEditor(true);
+    this._buildRoomEditor(!!rebuildEditor);
     this._drawPlan();
+    this._commit();
     this._fire();
   }
 
@@ -5528,13 +5723,14 @@ class House3DCardEditor extends HTMLElement {
     box.innerHTML = '';
 
     if (!f.rooms.length) {
-      box.innerHTML = '<div style="font-size:12px;color:var(--secondary-text-color);">Noch keine Räume. Mit „+ Raum“ anlegen.</div>';
+      box.innerHTML = '<div class="h3e-hint">Noch keine Räume. Im Plan aufziehen oder mit „+ Raum“ anlegen.</div>';
       return;
     }
 
     f.rooms.forEach((r, i) => {
       const row = document.createElement('div');
       const active = i === this._selRoom;
+      row.className = 'room-row';
       row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;border:1px solid ' +
         (active ? 'var(--primary-color)' : 'var(--divider-color)') + ';background:' +
         (active ? 'rgba(127,127,127,0.12)' : 'transparent') + ';';
@@ -5577,21 +5773,25 @@ class House3DCardEditor extends HTMLElement {
 
   _buildFloorTabs() {
     const tabs = this.querySelector('#floor-tabs');
+    if (!tabs) return;
     tabs.innerHTML = '';
     this._config.floors.forEach((f, i) => {
       const b = document.createElement('button');
-      const active = i === this._activeFloor;
       b.textContent = f.name || ('Etage ' + (i + 1));
       b.type = 'button';
-      b.style.cssText = 'padding:8px 12px;border-radius:6px;cursor:pointer;border:1px solid var(--divider-color);' +
-        (active ? 'background:var(--primary-color);color:var(--text-primary-color);font-weight:600;' : 'background:transparent;color:var(--primary-text-color);');
+      b.className = 'h3e-b floor-tab' + (i === this._activeFloor ? ' on' : '');
       b.addEventListener('click', () => {
+        if (this._activeFloor === i) return;
         this._activeFloor = i;
         this._selRoom = null;
         this._refresh();
       });
       tabs.appendChild(b);
     });
+    const add = this.querySelector('#floor-add');
+    if (add) add.disabled = this._config.floors.length >= 5;
+    const del = this.querySelector('#floor-del');
+    if (del) del.disabled = this._config.floors.length <= 1;
   }
 
   _refresh() {
@@ -5599,7 +5799,7 @@ class House3DCardEditor extends HTMLElement {
 
     const setField = (id, val) => {
       const el = this.querySelector(id);
-      if (el && document.activeElement !== el) el.value = val;
+      if (el && !this._focused(el)) el.value = val;
     };
     setField('#f-title', this._config.title || '');
     setField('#f-width', this._config.house.width);
@@ -5608,14 +5808,14 @@ class House3DCardEditor extends HTMLElement {
     setField('#f-roof-oh', this._config.roof.overhang);
     setField('#f-hist', this._config.history.hours);
     setField('#f-fluct', this._config.fluctuation.hours);
-    setField('#f-north', this._config.orientation.north);
-    if (this._outdoorEl && document.activeElement !== this._outdoorEl) {
+    this._syncNorthField();
+    if (this._outdoorEl && !this._focused(this._outdoorEl)) {
       this._outdoorEl.value = this._config.outdoor.temp_entity || '';
     }
     setField('#f-pv-peak', this._config.energy.pv_peak);
     Object.keys(this._energyEls || {}).forEach((k) => {
       const el = this._energyEls[k];
-      if (el && document.activeElement !== el) el.value = this._config.energy[k] || '';
+      if (el && !this._focused(el)) el.value = this._config.energy[k] || '';
     });
 
     const paint = paintToggle;
@@ -5623,7 +5823,6 @@ class House3DCardEditor extends HTMLElement {
     this.querySelectorAll('.axis-btn').forEach((b) => paint(b, b.dataset.axis === this._config.roof.axis));
     this.querySelectorAll('.disp-btn').forEach((b) => paint(b, b.dataset.mode === this._config.display));
     this.querySelectorAll('.style-btn').forEach((b) => paint(b, b.dataset.style === this._config.style));
-    this.querySelectorAll('.north-btn').forEach((b) => paint(b, parseInt(b.dataset.north, 10) === Math.round(Number(this._config.orientation.north) || 0)));
     this.querySelectorAll('.hp-side-btn').forEach((b) => paint(b, b.dataset.side === this._config.energy.heatpump_side));
     this.querySelectorAll('.wb-side-btn').forEach((b) => paint(b, b.dataset.side === this._config.energy.wallbox_side));
 
@@ -5639,9 +5838,19 @@ class House3DCardEditor extends HTMLElement {
     setField('#f-floor-h', floor.height);
     setField('#f-plan', floor.floorplan || '');
 
+    this._buildCopyRow();
+    this._paintHistBtns();
+    this._paintToolBtns();
     this._loadPlanImage();
     this._buildRoomList();
     this._buildRoomEditor();
+  }
+
+  // Liegt der Fokus in diesem Feld? Auch innerhalb einer Schattenwurzel.
+  _focused(el) {
+    if (!el) return false;
+    const root = typeof el.getRootNode === 'function' ? el.getRootNode() : document;
+    return !!root && root.activeElement === el;
   }
 
   _loadPlanImage() {
@@ -5684,39 +5893,63 @@ class House3DCardEditor extends HTMLElement {
     return { W: W, D: D, mx: mx, mz: mz, minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ, totalW: maxX - minX, totalD: maxZ - minZ };
   }
 
+  // Abbildung von Metern auf Pixel. Oben ein Band für Hinweis und Nordpfeil.
+  // Im Vollbild passt sich der Plan der Fläche an, sonst der Breite.
+  _view(cv) {
+    const b = this._bounds();
+    const full = !!this._full;
+    const cssW = Math.max(200, (cv && cv.clientWidth) || 400);
+    const R = full ? 40 : 28;
+    const band = 2 * R + 16;
+    let cssH, s, ox, oy;
+    if (full) {
+      cssH = Math.max(260, (cv && cv.clientHeight) || 500);
+      const availH = Math.max(80, cssH - band - 10);
+      s = Math.min((cssW - 20) / b.totalW, availH / b.totalD);
+      ox = (cssW - b.totalW * s) / 2;
+      oy = band + (availH - b.totalD * s) / 2;
+    } else {
+      s = cssW / b.totalW;
+      cssH = Math.round(Math.max(160, b.totalD * s) + band);
+      ox = 0;
+      oy = band;
+    }
+    return { b: b, s: s, ox: ox, oy: oy, cssW: cssW, cssH: cssH, R: R, cx: cssW - R - 10, cy: R + 8, full: full };
+  }
+
   _drawPlan() {
     const cv = this.querySelector('#plan-canvas');
     if (!cv) return;
-
-    const b = this._bounds();
-    const cssW = cv.clientWidth || 400;
-    const cssH = Math.max(140, cssW * (b.totalD / b.totalW));
-
-    cv.style.height = cssH + 'px';
+    const v = this._view(cv);
+    cv.style.height = v.full ? '' : v.cssH + 'px';
     const dpr = window.devicePixelRatio || 1;
-    cv.width = Math.round(cssW * dpr);
-    cv.height = Math.round(cssH * dpr);
+    const pw = Math.round(v.cssW * dpr), ph = Math.round(v.cssH * dpr);
+    if (cv.width !== pw) cv.width = pw;
+    if (cv.height !== ph) cv.height = ph;
+    this._lastView = v;
 
     const ctx = cv.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.clearRect(0, 0, v.cssW, v.cssH);
 
-    const s = cssW / b.totalW;
-    const px = (x) => (x - b.minX) * s;
-    const pz = (z) => (z - b.minZ) * s;
+    const b = v.b, s = v.s;
+    const px = (x) => v.ox + (x - b.minX) * s;
+    const pz = (z) => v.oy + (z - b.minZ) * s;
     const fm = this._fmt();
 
-    // Außenbereich für Anbauten
     ctx.fillStyle = '#15181f';
-    ctx.fillRect(0, 0, cssW, cssH);
+    ctx.fillRect(0, 0, v.cssW, v.cssH);
+    // Fläche für Anbauten
+    ctx.fillStyle = '#191d25';
+    ctx.fillRect(px(b.minX), pz(b.minZ), b.totalW * s, b.totalD * s);
 
     // Hausfläche
     const hx = px(0), hy = pz(0), hw = b.W * s, hh = b.D * s;
     if (this._planImg) {
       ctx.drawImage(this._planImg, hx, hy, hw, hh);
     } else {
-      ctx.fillStyle = '#1b1f27';
+      ctx.fillStyle = '#1e232c';
       ctx.fillRect(hx, hy, hw, hh);
       ctx.strokeStyle = '#2a303c';
       ctx.lineWidth = 1;
@@ -5735,11 +5968,15 @@ class House3DCardEditor extends HTMLElement {
     ctx.strokeRect(hx, hy, hw, hh);
     ctx.setLineDash([]);
 
-    ctx.fillStyle = '#5d6675';
-    ctx.font = '10px sans-serif';
+    // Hinweise im Kopfband
+    const set = hasValue((this._config.orientation || {}).north_arrow);
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText('Hauptbaukörper, außerhalb sind Anbauten möglich', 4, 4);
+    ctx.textBaseline = 'middle';
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = '#7c8595';
+    ctx.fillText('Gestrichelt: Hauptbaukörper, außerhalb Anbauten', 8, v.cy - 8);
+    ctx.fillStyle = set ? '#7c8595' : '#f1c40f';
+    ctx.fillText(set ? 'Nordpfeil rechts: ziehen zum Ändern' : 'Norden festlegen: Pfeil rechts nach Norden ziehen', 8, v.cy + 9);
 
     const floor = this._config.floors[this._activeFloor];
     floor.rooms.forEach((r, i) => {
@@ -5761,111 +5998,402 @@ class House3DCardEditor extends HTMLElement {
       ctx.beginPath();
       ctx.rect(x + 2, y + 2, Math.max(0, w - 4), Math.max(0, h - 4));
       ctx.clip();
-
       const cx = x + w / 2;
       const cy = y + h / 2;
       const nm = (r.name || '').trim();
       const showSize = h > 34;
-
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       if (nm !== '') {
         ctx.fillStyle = '#fff';
-        ctx.font = '600 11px sans-serif';
+        ctx.font = '600 ' + (v.full ? 13 : 11) + 'px sans-serif';
         ctx.fillText(nm, cx, showSize ? cy - 7 : cy);
       } else {
         ctx.fillStyle = 'rgba(255,255,255,0.45)';
-        ctx.font = 'italic 10px sans-serif';
+        ctx.font = 'italic ' + (v.full ? 12 : 10) + 'px sans-serif';
         ctx.fillText('ohne Namen', cx, showSize ? cy - 7 : cy);
       }
       if (showSize) {
         ctx.fillStyle = 'rgba(255,255,255,0.6)';
-        ctx.font = '9px sans-serif';
+        ctx.font = (v.full ? 11 : 9) + 'px sans-serif';
         ctx.fillText(fm.dim(r.w) + ' × ' + fm.dim(r.d) + ' m', cx, cy + 7);
       }
       ctx.restore();
 
       if (sel) {
-        ctx.fillStyle = '#2f6bff';
-        ctx.fillRect(x + w - 11, y + h - 11, 11, 11);
+        const small = Math.min(w, h) < 24;
+        this._handlePoints(x, y, w, h).forEach((hp) => {
+          if (small && hp[0] !== 'se') return;
+          ctx.fillStyle = '#fff';
+          ctx.strokeStyle = '#2f6bff';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(hp[1] - 4, hp[2] - 4, 8, 8);
+          ctx.strokeRect(hp[1] - 4, hp[2] - 4, 8, 8);
+        });
       }
     });
+
+    // Hilfslinien des Magneten
+    const g = this._guides;
+    if (g) {
+      ctx.strokeStyle = '#3ad1ff';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      g.x.forEach((gx) => { ctx.beginPath(); ctx.moveTo(px(gx), pz(b.minZ)); ctx.lineTo(px(gx), pz(b.maxZ)); ctx.stroke(); });
+      g.z.forEach((gz) => { ctx.beginPath(); ctx.moveTo(px(b.minX), pz(gz)); ctx.lineTo(px(b.maxX), pz(gz)); ctx.stroke(); });
+      ctx.setLineDash([]);
+    }
+
+    // Vorschau beim Aufziehen
+    const dr = this._drawRect;
+    if (dr) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(px(dr.x), pz(dr.z), dr.w * s, dr.d * s);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(px(dr.x), pz(dr.z), dr.w * s, dr.d * s);
+    }
+
+    // Maße beim Ziehen
+    const live = dr || (this._dragging && this._selRoom !== null ? floor.rooms[this._selRoom] : null);
+    if (live) {
+      const text = fm.dim(live.w) + ' × ' + fm.dim(live.d) + ' m';
+      const x = px(live.x) + live.w * s / 2;
+      let y = pz(live.z) - 13;
+      if (y < v.oy + 8) y = pz(live.z + live.d) + 13;
+      ctx.font = '600 11px sans-serif';
+      const m = ctx.measureText(text);
+      const tw = (m && m.width) || text.length * 6;
+      ctx.fillStyle = 'rgba(13,15,20,0.92)';
+      ctx.fillRect(x - tw / 2 - 6, y - 9, tw + 12, 18);
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y);
+    }
+
+    this._drawCompass(ctx, v);
+  }
+
+  // Anfasser eines Raumes in Pixeln: Ecken und Kantenmitten
+  _handlePoints(x, y, w, h) {
+    return [['nw', x, y], ['ne', x + w, y], ['se', x + w, y + h], ['sw', x, y + h],
+      ['n', x + w / 2, y], ['e', x + w, y + h / 2], ['s', x + w / 2, y + h], ['w', x, y + h / 2]];
+  }
+
+  // Nordpfeil oben rechts. Die Nadel zeigt nach Norden, gedreht um den
+  // eingestellten Winkel im Uhrzeigersinn ab oben.
+  _drawCompass(ctx, v) {
+    const o = this._config.orientation || {};
+    const set = hasValue(o.north_arrow);
+    const a = set ? parseFloat(o.north_arrow) * Math.PI / 180 : 0;
+    const R = v.R;
+    ctx.save();
+    ctx.translate(v.cx, v.cy);
+    ctx.beginPath();
+    ctx.arc(0, 0, R, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(13,15,20,0.9)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = set ? '#5d6675' : '#f1c40f';
+    if (!set) ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (set) {
+      ctx.font = '600 ' + (v.full ? 12 : 10) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      [['N', 0], ['O', 90], ['S', 180], ['W', 270]].forEach((l) => {
+        const ang = a + l[1] * Math.PI / 180;
+        const rr = R - (v.full ? 10 : 8);
+        ctx.fillStyle = l[0] === 'N' ? '#ff6b5b' : '#9aa3b2';
+        ctx.fillText(l[0], Math.sin(ang) * rr, -Math.cos(ang) * rr);
+      });
+    }
+    ctx.rotate(a);
+    const len = R * 0.62, wid = R * 0.17;
+    ctx.beginPath();
+    ctx.moveTo(0, -len);
+    ctx.lineTo(wid, 0);
+    ctx.lineTo(-wid, 0);
+    ctx.closePath();
+    ctx.fillStyle = set ? '#e74c3c' : '#8a93a3';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(0, len * 0.6);
+    ctx.lineTo(wid, 0);
+    ctx.lineTo(-wid, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#5d6675';
+    ctx.fill();
+    ctx.restore();
+    if (!set) {
+      ctx.fillStyle = '#f1c40f';
+      ctx.font = '600 ' + (v.full ? 14 : 12) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('?', v.cx + R * 0.45, v.cy + R * 0.45);
+    }
+  }
+
+  // Was liegt unter dem Zeiger: Nordpfeil, Anfasser des gewählten Raumes, ein Raum oder nichts
+  _hitTest(p, v, pointerType) {
+    const touch = pointerType === 'touch' || pointerType === 'pen';
+    const hr = touch ? 16 : 8;
+    if (Math.hypot(p.x - v.cx, p.y - v.cy) <= v.R + 6) return { kind: 'north' };
+    const rooms = this._config.floors[this._activeFloor].rooms;
+    const X = (x) => v.ox + (x - v.b.minX) * v.s;
+    const Z = (z) => v.oy + (z - v.b.minZ) * v.s;
+    const si = this._selRoom;
+    if (si !== null && rooms[si]) {
+      const r = rooms[si];
+      const x0 = X(r.x), x1 = X(r.x + r.w), y0 = Z(r.z), y1 = Z(r.z + r.d);
+      const small = Math.min(x1 - x0, y1 - y0) < 24;
+      for (const hp of this._handlePoints(x0, y0, x1 - x0, y1 - y0)) {
+        // Kleiner Raum: nur die Ecke unten rechts, und nur von außen gegriffen,
+        // damit er sich weiter verschieben lässt
+        if (small && (hp[0] !== 'se' || p.x < x1 - 2 || p.y < y1 - 2)) continue;
+        if (Math.abs(p.x - hp[1]) <= hr && Math.abs(p.y - hp[2]) <= hr) return { kind: 'handle', handle: hp[0], idx: si };
+      }
+      if (!small) {
+        const near = touch ? 10 : 5;
+        const inX = p.x >= x0 - near && p.x <= x1 + near;
+        const inY = p.y >= y0 - near && p.y <= y1 + near;
+        if (inY && Math.abs(p.x - x0) <= near) return { kind: 'handle', handle: 'w', idx: si };
+        if (inY && Math.abs(p.x - x1) <= near) return { kind: 'handle', handle: 'e', idx: si };
+        if (inX && Math.abs(p.y - y0) <= near) return { kind: 'handle', handle: 'n', idx: si };
+        if (inX && Math.abs(p.y - y1) <= near) return { kind: 'handle', handle: 's', idx: si };
+      }
+    }
+    for (let i = rooms.length - 1; i >= 0; i--) {
+      const r = rooms[i];
+      if (p.x >= X(r.x) && p.x <= X(r.x + r.w) && p.y >= Z(r.z) && p.y <= Z(r.z + r.d)) return { kind: 'room', idx: i };
+    }
+    return { kind: 'empty' };
+  }
+
+  // Linien, an denen Kanten einrasten: Hausrand und Kanten der anderen Räume dieser Etage
+  _snapLines(skip) {
+    const xs = [0, this._config.house.width];
+    const zs = [0, this._config.house.depth];
+    this._config.floors[this._activeFloor].rooms.forEach((r, i) => {
+      if (i === skip) return;
+      xs.push(r.x, r.x + r.w);
+      zs.push(r.z, r.z + r.d);
+    });
+    return { xs: xs, zs: zs };
+  }
+
+  // Ein Wert rastet an der nächsten Linie ein, sonst auf das Raster von 10 cm
+  _snapVal(val, lines, thr) {
+    if (this._magnet) {
+      let best = null;
+      lines.forEach((t) => {
+        if (Math.abs(t - val) <= thr && (best === null || Math.abs(t - val) < Math.abs(best - val))) best = t;
+      });
+      if (best !== null) return { v: round2(best), line: best };
+    }
+    return { v: round1(val), line: null };
+  }
+
+  // Beim Verschieben zählen beide Kanten, die nähere rastet ein
+  _snapSpan(start, size, lines, thr) {
+    if (this._magnet) {
+      let best = null;
+      lines.forEach((t) => {
+        [t - start, t - start - size].forEach((d) => {
+          if (Math.abs(d) <= thr && (best === null || Math.abs(d) < Math.abs(best.d))) best = { d: d, t: t };
+        });
+      });
+      if (best) return { v: round2(start + best.d), line: best.t };
+    }
+    return { v: round1(start), line: null };
+  }
+
+  _setNorthFrom(p, v) {
+    let a = Math.round(Math.atan2(p.x - v.cx, -(p.y - v.cy)) * 180 / Math.PI);
+    a = ((a % 360) + 360) % 360;
+    if (this._magnet) {
+      const q = Math.round(a / 45) * 45;
+      if (Math.abs(q - a) <= 4) a = q % 360;
+    }
+    this._config.orientation = { north_arrow: a };
+    this._syncNorthField(true);
+    this._buildPvFaces();
+    this._drawPlan();
+  }
+
+  _syncNorthField(force) {
+    const el = this.querySelector('#f-north');
+    if (!el || (!force && this._focused(el))) return;
+    const o = this._config.orientation || {};
+    el.value = hasValue(o.north_arrow) ? String(o.north_arrow) : '';
   }
 
   _setupCanvas() {
     const cv = this.querySelector('#plan-canvas');
-    let mode = null, startX = 0, startY = 0, orig = null;
-
-    const toPlan = (e) => {
+    if (!cv) return;
+    let drag = null;
+    const local = (e) => {
       const r = cv.getBoundingClientRect();
-      const b = this._bounds();
-      const s = r.width / b.totalW;
-      return { x: (e.clientX - r.left) / s + b.minX, z: (e.clientY - r.top) / s + b.minZ, s: s, b: b };
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
     };
+    const toPlan = (p, v) => ({
+      x: clamp((p.x - v.ox) / v.s + v.b.minX, v.b.minX, v.b.maxX),
+      z: clamp((p.y - v.oy) / v.s + v.b.minZ, v.b.minZ, v.b.maxZ)
+    });
+    const thrOf = (v) => Math.min(0.5, 10 / v.s);
+    const CURSOR = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
+    const cursorFor = (h) => (h.kind === 'north' ? 'grab' : h.kind === 'handle' ? CURSOR[h.handle] : h.kind === 'room' ? 'move' : 'crosshair');
 
     cv.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      try { cv.focus({ preventScroll: true }); } catch (err) { /* ältere Browser */ }
       this._dragBounds = null;
-      const p = toPlan(e);
+      const v = this._view(cv);
+      this._lastView = v;
+      const p = local(e);
+      const hit = this._hitTest(p, v, e.pointerType);
       const floor = this._config.floors[this._activeFloor];
-
-      let hit = null, handle = false;
-      for (let i = floor.rooms.length - 1; i >= 0; i--) {
-        const r = floor.rooms[i];
-        const hx = r.x + r.w, hz = r.z + r.d;
-        const handleSize = 12 / p.s;
-        if (p.x >= hx - handleSize && p.x <= hx && p.z >= hz - handleSize && p.z <= hz) { hit = i; handle = true; break; }
-        if (p.x >= r.x && p.x <= hx && p.z >= r.z && p.z <= hz) { hit = i; break; }
+      const pt = toPlan(p, v);
+      if (hit.kind === 'north') {
+        drag = { mode: 'north' };
+      } else if (hit.kind === 'handle' || hit.kind === 'room') {
+        if (this._selRoom !== hit.idx) {
+          this._selRoom = hit.idx;
+          this._buildRoomList();
+          this._buildRoomEditor(true);
+        }
+        drag = { mode: hit.kind === 'handle' ? 'resize' : 'move', handle: hit.handle, idx: hit.idx, start: pt,
+          orig: Object.assign({}, floor.rooms[hit.idx]), moved: false };
+        this._dragging = true;
+      } else {
+        drag = { mode: 'pending', startPx: p, start: pt };
       }
-
-      if (hit === null) {
-        this._selRoom = null;
-        this._drawPlan();
-        this._buildRoomList();
-        this._buildRoomEditor(true);
-        return;
-      }
-
-      this._selRoom = hit;
-      mode = handle ? 'resize' : 'move';
-      startX = p.x;
-      startY = p.z;
-      orig = Object.assign({}, floor.rooms[hit]);
-      // Bereich während des Ziehens einfrieren, sonst wächst er mit und das Bild springt
-      this._dragBounds = p.b;
+      this._dragBounds = v.b;
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* nicht unterstützt */ }
-      this._drawPlan();
-      this._buildRoomList();
-      this._buildRoomEditor(true);
+      cv.style.cursor = drag.mode === 'north' ? 'grabbing' : cursorFor(hit);
+      if (drag.mode === 'north') this._setNorthFrom(p, v);
+      else this._drawPlan();
     });
 
     cv.addEventListener('pointermove', (e) => {
-      if (!mode || this._selRoom === null) return;
-      const p = toPlan(e);
-      const r = this._config.floors[this._activeFloor].rooms[this._selRoom];
-      if (!r) return;
-      const b = p.b;
-      if (mode === 'move') {
-        r.x = round1(Math.max(b.minX, Math.min(b.maxX - orig.w, orig.x + (p.x - startX))));
-        r.z = round1(Math.max(b.minZ, Math.min(b.maxZ - orig.d, orig.z + (p.z - startY))));
-      } else {
-        r.w = round1(Math.max(0.5, Math.min(b.maxX - r.x, orig.w + (p.x - startX))));
-        r.d = round1(Math.max(0.5, Math.min(b.maxZ - r.z, orig.d + (p.z - startY))));
+      const p = local(e);
+      const v = this._lastView || this._view(cv);
+      if (!drag) {
+        cv.style.cursor = cursorFor(this._hitTest(p, v, e.pointerType));
+        return;
       }
+      if (drag.mode === 'north') {
+        this._setNorthFrom(p, v);
+        return;
+      }
+      const thr = thrOf(v);
+      const pt = toPlan(p, v);
+      if (drag.mode === 'pending') {
+        if (Math.hypot(p.x - drag.startPx.x, p.y - drag.startPx.y) < 5) return;
+        drag.mode = 'draw';
+      }
+      if (drag.mode === 'draw') {
+        const L = this._snapLines(-1);
+        const ax = this._snapVal(drag.start.x, L.xs, thr), az = this._snapVal(drag.start.z, L.zs, thr);
+        const bx = this._snapVal(pt.x, L.xs, thr), bz = this._snapVal(pt.z, L.zs, thr);
+        const x0 = Math.min(ax.v, bx.v), x1 = Math.max(ax.v, bx.v);
+        const z0 = Math.min(az.v, bz.v), z1 = Math.max(az.v, bz.v);
+        this._drawRect = { x: x0, z: z0, w: round2(x1 - x0), d: round2(z1 - z0) };
+        this._guides = {
+          x: [ax.line, bx.line].filter((l) => l !== null),
+          z: [az.line, bz.line].filter((l) => l !== null)
+        };
+        this._drawPlan();
+        return;
+      }
+      const r = this._config.floors[this._activeFloor].rooms[drag.idx];
+      if (!r) return;
+      const o = drag.orig, b = v.b;
+      const dx = pt.x - drag.start.x, dz = pt.z - drag.start.z;
+      const L = this._snapLines(drag.idx);
+      const gx = [], gz = [];
+      if (drag.mode === 'move') {
+        const sx = this._snapSpan(o.x + dx, o.w, L.xs, thr);
+        const sz = this._snapSpan(o.z + dz, o.d, L.zs, thr);
+        r.x = round2(clamp(sx.v, Math.max(-60, b.minX), Math.min(60, b.maxX) - o.w));
+        r.z = round2(clamp(sz.v, Math.max(-60, b.minZ), Math.min(60, b.maxZ) - o.d));
+        if (sx.line !== null) gx.push(sx.line);
+        if (sz.line !== null) gz.push(sz.line);
+      } else {
+        const h = drag.handle;
+        let x0 = o.x, x1 = o.x + o.w, z0 = o.z, z1 = o.z + o.d;
+        if (h.indexOf('w') >= 0) {
+          const q = this._snapVal(o.x + dx, L.xs, thr);
+          x0 = Math.max(b.minX, Math.min(q.v, x1 - 0.5));
+          if (q.line !== null) gx.push(q.line);
+        }
+        if (h.indexOf('e') >= 0) {
+          const q = this._snapVal(o.x + o.w + dx, L.xs, thr);
+          x1 = Math.min(b.maxX, Math.max(q.v, x0 + 0.5));
+          if (q.line !== null) gx.push(q.line);
+        }
+        if (h.indexOf('n') >= 0) {
+          const q = this._snapVal(o.z + dz, L.zs, thr);
+          z0 = Math.max(b.minZ, Math.min(q.v, z1 - 0.5));
+          if (q.line !== null) gz.push(q.line);
+        }
+        if (h.indexOf('s') >= 0) {
+          const q = this._snapVal(o.z + o.d + dz, L.zs, thr);
+          z1 = Math.min(b.maxZ, Math.max(q.v, z0 + 0.5));
+          if (q.line !== null) gz.push(q.line);
+        }
+        r.x = round2(x0);
+        r.z = round2(z0);
+        r.w = round2(x1 - x0);
+        r.d = round2(z1 - z0);
+      }
+      this._guides = { x: gx, z: gz };
+      drag.moved = drag.moved || r.x !== o.x || r.z !== o.z || r.w !== o.w || r.d !== o.d;
       this._drawPlan();
       this._syncRoomFields();
     });
 
-    const finish = (e) => {
-      if (!mode) return;
-      mode = null;
-      this._dragBounds = null;
+    const finish = (e, cancel) => {
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      this._dragging = false;
       try { cv.releasePointerCapture(e.pointerId); } catch (err) { /* nicht gefangen */ }
+      this._dragBounds = null;
+      this._guides = null;
+      const rect = this._drawRect;
+      this._drawRect = null;
+      if (d.mode === 'north') {
+        this._commit();
+        this._fire();
+      } else if (d.mode === 'pending') {
+        if (!cancel && this._selRoom !== null) {
+          this._selRoom = null;
+          this._buildRoomList();
+          this._buildRoomEditor(true);
+        }
+      } else if (d.mode === 'draw') {
+        if (!cancel && rect && rect.w >= 0.5 && rect.d >= 0.5) {
+          this._addRoomAt(rect);
+          return;
+        }
+      } else if (cancel) {
+        const r = this._config.floors[this._activeFloor].rooms[d.idx];
+        if (r) Object.assign(r, d.orig);
+        this._syncRoomFields();
+      } else if (d.moved) {
+        this._afterRoomChange(false);
+        return;
+      }
+      cv.style.cursor = 'crosshair';
       this._drawPlan();
-      this._buildRoomList();
-      this._fire();
     };
-    cv.addEventListener('pointerup', finish);
-    cv.addEventListener('pointercancel', finish);
+    cv.addEventListener('pointerup', (e) => finish(e, false));
+    cv.addEventListener('pointercancel', (e) => finish(e, true));
 
     if (window.ResizeObserver) {
       this._cvRo = new ResizeObserver(() => this._drawPlan());
@@ -5873,12 +6401,264 @@ class House3DCardEditor extends HTMLElement {
     }
   }
 
+  // Tastatur im Arbeitsbereich. In Textfeldern bleibt das Rückgängig des Browsers.
+  _onKey(e) {
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    const t = path[0] || e.target;
+    const tag = (t && t.tagName ? t.tagName : '').toLowerCase();
+    const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || !!(t && t.isContentEditable);
+    const mod = e.ctrlKey || e.metaKey;
+    const k = e.key;
+    const stop = () => { e.preventDefault(); e.stopPropagation(); };
+    if (mod && !typing && (k === 'z' || k === 'Z')) {
+      if (e.shiftKey) this._redoStep(); else this._undoStep();
+      stop();
+      return;
+    }
+    if (mod && !typing && (k === 'y' || k === 'Y')) {
+      this._redoStep();
+      stop();
+      return;
+    }
+    if (k === 'Escape' && this._full && !this._isFs()) {
+      this._setFull(false);
+      stop();
+      return;
+    }
+    if (t !== this.querySelector('#plan-canvas') || mod) return;
+    const step = e.shiftKey ? 1 : 0.1;
+    const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    if (moves[k]) {
+      if (this._nudge(moves[k][0], moves[k][1])) stop();
+      return;
+    }
+    if ((k === 'Delete' || k === 'Backspace') && this._selRoom !== null) {
+      this._deleteRoom(this._selRoom);
+      stop();
+    }
+  }
+
+  _nudge(dx, dz) {
+    const f = this._config.floors[this._activeFloor];
+    const r = this._selRoom !== null ? f.rooms[this._selRoom] : null;
+    if (!r) return false;
+    r.x = round2(clamp(r.x + dx, -60, 60 - r.w));
+    r.z = round2(clamp(r.z + dz, -60, 60 - r.d));
+    this._drawPlan();
+    this._syncRoomFields();
+    this._buildRoomList();
+    this._commit('nudge:' + this._activeFloor + ':' + this._selRoom);
+    this._fireSoon();
+    return true;
+  }
+
+  // Bei schnellen Folgen, etwa gehaltener Pfeiltaste, erst kurz danach übergeben
+  _fireSoon() {
+    if (this._fireTimer) clearTimeout(this._fireTimer);
+    this._fireTimer = setTimeout(() => {
+      this._fireTimer = null;
+      this._fire();
+    }, 250);
+  }
+
+  _flushFire() {
+    if (!this._fireTimer) return;
+    clearTimeout(this._fireTimer);
+    this._fireTimer = null;
+    this._fire();
+  }
+
+  /* ---------- Rückgängig und Wiederholen ---------- */
+
+  _snapState() {
+    return {
+      data: JSON.stringify({ floors: this._config.floors, orientation: this._config.orientation || {} }),
+      floor: this._activeFloor,
+      room: this._selRoom
+    };
+  }
+
+  _histReset() {
+    this._undo = [];
+    this._redo = [];
+    this._histCur = this._config ? this._snapState() : null;
+    this._histTag = null;
+    this._paintHistBtns();
+  }
+
+  // Nach jeder abgeschlossenen Änderung. Gleiche Kennung kurz hintereinander,
+  // etwa mehrere Pfeiltasten, ergibt einen einzigen Schritt.
+  _commit(tag) {
+    if (!this._config) return;
+    if (!this._histCur) this._histReset();
+    const now = this._snapState();
+    if (now.data === this._histCur.data) {
+      this._histCur = now;
+      return;
+    }
+    const merge = !!tag && tag === this._histTag && Date.now() - (this._histTime || 0) < 1200;
+    if (!merge) {
+      this._undo.push(this._histCur);
+      if (this._undo.length > 100) this._undo.shift();
+    }
+    this._redo = [];
+    this._histCur = now;
+    this._histTag = tag || null;
+    this._histTime = Date.now();
+    this._paintHistBtns();
+  }
+
+  _undoStep() {
+    if (!this._undo) return;
+    this._flushFire();
+    this._commit();
+    if (!this._undo.length) return;
+    const prev = this._undo.pop();
+    this._redo.push(this._histCur);
+    this._restore(prev);
+  }
+
+  _redoStep() {
+    if (!this._redo || !this._redo.length) return;
+    const next = this._redo.pop();
+    this._undo.push(this._histCur);
+    this._restore(next);
+  }
+
+  _restore(st) {
+    const d = JSON.parse(st.data);
+    this._config.floors = d.floors;
+    this._config.orientation = d.orientation || {};
+    this._activeFloor = Math.max(0, Math.min(st.floor || 0, d.floors.length - 1));
+    const rooms = d.floors[this._activeFloor].rooms;
+    this._selRoom = (st.room !== null && st.room !== undefined && rooms[st.room]) ? st.room : null;
+    this._histCur = st;
+    this._histTag = null;
+    this._editorKey = null;
+    this._refresh();
+    this._drawPlan();
+    this._fire();
+  }
+
+  _paintHistBtns() {
+    const u = this.querySelector('#undo-btn');
+    const r = this.querySelector('#redo-btn');
+    if (u) u.disabled = !(this._undo && this._undo.length);
+    if (r) r.disabled = !(this._redo && this._redo.length);
+  }
+
+  _paintToolBtns() {
+    const m = this.querySelector('#magnet-btn');
+    if (m) m.classList.toggle('on', !!this._magnet);
+    const f = this.querySelector('#full-btn');
+    if (f) {
+      f.classList.toggle('on', !!this._full);
+      f.textContent = this._full ? 'Vollbild beenden' : 'Vollbild';
+    }
+  }
+
+  /* ---------- Vollbild ---------- */
+
+  _isFs() {
+    const ws = this.querySelector('#ws');
+    if (!ws) return false;
+    try { return ws.matches(':fullscreen'); } catch (e) { /* älterer Browser */ }
+    try { return ws.matches(':-webkit-full-screen'); } catch (e) { return false; }
+  }
+
+  // Der Arbeitsbereich füllt den Bildschirm. Erlaubt der Browser kein
+  // Vollbild, füllt er wenigstens das ganze Editorfenster.
+  _setFull(on) {
+    const ws = this.querySelector('#ws');
+    on = !!on;
+    if (!ws || on === !!this._full) return;
+    this._full = on;
+    ws.classList.toggle('full', on);
+    if (on) {
+      const req = ws.requestFullscreen || ws.webkitRequestFullscreen;
+      const allowed = document.fullscreenEnabled !== false || document.webkitFullscreenEnabled;
+      if (req && allowed) {
+        try {
+          const r = req.call(ws);
+          if (r && typeof r.catch === 'function') r.catch(() => { /* bleibt im Editorfenster */ });
+        } catch (e) { /* bleibt im Editorfenster */ }
+      }
+    } else if (this._isFs()) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) {
+        try {
+          const r = exit.call(document);
+          if (r && typeof r.catch === 'function') r.catch(() => { /* schon beendet */ });
+        } catch (e) { /* schon beendet */ }
+      }
+    }
+    this._paintToolBtns();
+    this._drawPlan();
+    const raf = window.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
+    raf(() => this._drawPlan());
+    const cv = this.querySelector('#plan-canvas');
+    if (on && cv) {
+      try { cv.focus({ preventScroll: true }); } catch (e) { /* ältere Browser */ }
+    }
+  }
+
+  // Mit Esc beendetes Vollbild auch im Editor beenden
+  _fsChanged() {
+    const on = this._isFs();
+    if (this._fsOn && !on && this._full) this._setFull(false);
+    this._fsOn = on;
+    this._drawPlan();
+  }
+
+  /* ---------- Etage kopieren ---------- */
+
+  _buildCopyRow() {
+    const row = this.querySelector('#copy-row');
+    const sel = this.querySelector('#copy-src');
+    if (!row || !sel) return;
+    const floors = this._config.floors;
+    const others = floors.map((f, i) => i).filter((i) => i !== this._activeFloor);
+    row.style.display = others.length ? '' : 'none';
+    const hint = this.querySelector('#copy-hint');
+    if (hint) hint.style.display = others.length ? '' : 'none';
+    const keep = sel.value;
+    sel.innerHTML = '';
+    others.forEach((i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = floors[i].name || ('Etage ' + (i + 1));
+      sel.appendChild(o);
+    });
+    if (others.some((i) => String(i) === keep)) sel.value = keep;
+    const ask = this.querySelector('#copy-ask');
+    if (ask) ask.style.display = 'none';
+  }
+
+  // Übernimmt Lage, Größe und Typ der Räume, ohne Namen, Farbe und Sensoren
+  _copyFloor(mode) {
+    const sel = this.querySelector('#copy-src');
+    const src = this._config.floors[parseInt(sel && sel.value, 10)];
+    const dst = this._config.floors[this._activeFloor];
+    const ask = this.querySelector('#copy-ask');
+    if (ask) ask.style.display = 'none';
+    if (!src || !dst || src === dst) return;
+    const copies = (src.rooms || []).map((r) => ({
+      name: '', type: r.type || 'room', x: r.x, z: r.z, w: r.w, d: r.d,
+      temp_entity: '', hum_entity: '', contacts: []
+    }));
+    dst.rooms = mode === 'append' ? dst.rooms.concat(copies) : copies;
+    this._selRoom = null;
+    this._afterRoomChange(true);
+  }
+
   _buildRoomEditor(force) {
     const box = this.querySelector('#room-editor');
+    if (!box) return;
     const floor = this._config.floors[this._activeFloor];
 
     if (this._selRoom === null || !floor.rooms[this._selRoom]) {
-      box.innerHTML = '<div style="font-size:12px;color:var(--secondary-text-color);">Kein Raum ausgewählt. Auf ein Rechteck klicken oder Raum hinzufügen.</div>';
+      box.innerHTML = '<div class="h3e-head">Ausgewählter Raum</div>' +
+        '<div class="h3e-hint">Kein Raum ausgewählt. Im Plan auf einen Raum klicken oder einen neuen aufziehen.</div>';
       this._editorKey = null;
       return;
     }
@@ -5893,7 +6673,8 @@ class House3DCardEditor extends HTMLElement {
     this._editorKey = key;
 
     const room = floor.rooms[this._selRoom];
-    box.innerHTML = '';
+    box.innerHTML = '<div class="h3e-head">Ausgewählter Raum</div>';
+    const commit = () => this._commit();
 
     const nameWrap = makeField('Raumname (optional)', 'text');
     const nameF = nameWrap.input;
@@ -5905,6 +6686,7 @@ class House3DCardEditor extends HTMLElement {
       this._buildRoomList();
       this._fire();
     });
+    nameF.addEventListener('change', commit);
     box.appendChild(nameWrap);
 
     // Raumtyp frei eingebbar, die bekannten Typen dienen als Vorschlag
@@ -5921,6 +6703,7 @@ class House3DCardEditor extends HTMLElement {
       this._syncColorField();
       this._fire();
     });
+    typeF.addEventListener('change', commit);
     if (!this.querySelector('#house3d-roomtypes')) {
       const dl = document.createElement('datalist');
       dl.id = 'house3d-roomtypes';
@@ -5947,17 +6730,20 @@ class House3DCardEditor extends HTMLElement {
       this._buildRoomList();
       this._fire();
     });
+    colorF.addEventListener('change', commit);
     colorWrap.style.flex = '1';
     colorRow.appendChild(colorWrap);
     const resetColor = document.createElement('button');
     resetColor.type = 'button';
     resetColor.textContent = 'Farbe des Typs';
-    resetColor.style.cssText = 'padding:10px;border-radius:6px;cursor:pointer;border:1px solid var(--divider-color,#c4c4c4);background:transparent;color:var(--primary-text-color,#212121);font-family:inherit;white-space:nowrap;';
+    resetColor.className = 'h3e-b';
+    resetColor.style.cssText = 'padding:10px;white-space:nowrap;';
     resetColor.addEventListener('click', () => {
       delete room.color;
       this._syncColorField();
       this._drawPlan();
       this._buildRoomList();
+      this._commit();
       this._fire();
     });
     colorRow.appendChild(resetColor);
@@ -5997,28 +6783,30 @@ class House3DCardEditor extends HTMLElement {
         e.target.value = v;
         this._drawPlan();
         this._buildRoomList();
+        this._commit();
         this._fire();
       });
       grid.appendChild(wrap);
     });
     box.appendChild(grid);
 
+    const actions = document.createElement('div');
+    actions.className = 'h3e-row';
     const dup = document.createElement('button');
     dup.type = 'button';
+    dup.id = 'room-dup';
+    dup.className = 'h3e-b';
     dup.textContent = 'Raum duplizieren';
-    dup.style.cssText = 'padding:8px;border-radius:6px;cursor:pointer;border:1px solid var(--divider-color);background:transparent;color:var(--primary-text-color);';
-    dup.addEventListener('click', () => {
-      const copy = Object.assign({}, room);
-      copy.x = round1(Math.min(room.x + 1, 60));
-      copy.z = round1(Math.min(room.z + 1, 60));
-      floor.rooms.push(copy);
-      this._selRoom = floor.rooms.length - 1;
-      this._buildRoomList();
-      this._buildRoomEditor(true);
-      this._drawPlan();
-      this._fire();
-    });
-    box.appendChild(dup);
+    dup.addEventListener('click', () => this._duplicateRoom(this._selRoom));
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.id = 'room-del';
+    del.className = 'h3e-b h3e-danger';
+    del.textContent = 'Raum löschen';
+    del.addEventListener('click', () => this._deleteRoom(this._selRoom));
+    actions.appendChild(dup);
+    actions.appendChild(del);
+    box.appendChild(actions);
   }
 
   _syncColorField() {
@@ -6035,7 +6823,7 @@ class House3DCardEditor extends HTMLElement {
     const room = floor.rooms[this._selRoom];
     const set = (id, val) => {
       const el = this.querySelector(id);
-      if (el && document.activeElement !== el) el.value = val;
+      if (el && !this._focused(el)) el.value = val;
     };
     set('#room-name-field', room.name || '');
     set('#room-type-field', typeFieldValue(room.type));
@@ -6043,7 +6831,7 @@ class House3DCardEditor extends HTMLElement {
     set('#room-entity-field', room.temp_entity || '');
     set('#room-hum-field', room.hum_entity || '');
     this.querySelectorAll('.room-num').forEach((tf) => {
-      if (document.activeElement !== tf) tf.value = room[tf.dataset.key];
+      if (!this._focused(tf)) tf.value = room[tf.dataset.key];
     });
   }
 }

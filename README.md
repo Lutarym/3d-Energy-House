@@ -19,11 +19,12 @@ Drehbare 3D-Darstellung eines Einfamilienhauses für Home Assistant, mit Etagen,
 - Nachts warmes Licht in den Räumen und vor den Außenwänden
 - Garten mit Rasen, Hecke und Bäumen, Weg zum Flur und Einfahrt zum Carport
 - Offene Fenster und Türen markieren den Raum
-- Nordpfeil, Sonne und Mond mit Phase passend zur Uhrzeit
+- Nordpfeil, Licht nach Sonnenstand und Mond mit Phase passend zur Uhrzeit
 - Energiefluss: PV-Module auf dem Dach, Wärmepumpe und Wallbox mit Live-Werten
 - Haus wird automatisch mittig ausgerichtet und lässt sich jederzeit verschieben
 - Menü links zum Aufklappen, ab Werk geschlossen
-- Vollständiger visueller Editor
+- Karte nutzt die volle sichtbare Höhe, in der Panel-Ansicht die ganze Fläche
+- Vollständiger visueller Editor mit großem Raumeditor im Vollbild
 
 ## Installation über HACS
 
@@ -142,13 +143,15 @@ Kontakte haben keine Langzeitstatistik. Im Rückblick erscheinen sie deshalb nic
 
 ## Nordpfeil, Sonne und Mond
 
-Im Editor unter „Ausrichtung für Nordpfeil und Sonne“ angeben, in welche Himmelsrichtung die obere Kante des Grundrisses zeigt. Ein Nordpfeil liegt dann vorne links am Boden.
+Wo Norden liegt, legst du im Raumeditor fest: den Nordpfeil oben rechts im Plan in Richtung Norden ziehen oder daneben den Winkel in Grad eintragen, im Uhrzeigersinn ab oben. Die Karte gibt dafür nichts vor. Ist Norden festgelegt, liegt ein Nordpfeil vorne links am Boden.
 
-Die Sonne steht als gelbe Kugel am Himmel, berechnet aus Uhrzeit und dem Standort in den Einstellungen von Home Assistant, und beleuchtet das Haus aus dieser Richtung. Nachts ist sie ausgeblendet, das Haus bleibt trotzdem gut lesbar. Im Rückblick wandert sie mit der gewählten Stunde. Ist kein Standort hinterlegt, verwendet die Karte in der Live-Ansicht die Entität `sun.sun`.
+Die Sonne selbst wird nicht gezeichnet. Ihr Licht fällt aus der Richtung, in der sie gerade steht, berechnet aus Uhrzeit und dem Standort in den Einstellungen von Home Assistant. Im Rückblick wandert das Licht mit der gewählten Stunde. Ist kein Standort hinterlegt, verwendet die Karte in der Live-Ansicht die Entität `sun.sun`.
 
 Der Mond steht in seiner Himmelsrichtung und zeigt die aktuelle Phase, auf der Südhalbkugel gespiegelt. Ist er nachts über dem Horizont, kommt das schwache, kühle Nachtlicht aus seiner Richtung, bei Vollmond etwas heller. Der Mond braucht den Standort in den Einstellungen von Home Assistant.
 
-Der Schalter „Sonne, Mond und Nordpfeil“ im Menü blendet alles davon aus.
+Ohne festgelegten Norden gibt es keinen Nordpfeil und keinen Mond, das Licht fällt dann von schräg vorn. Himmel, Wolken, Sterne und die Farbe des Lichts folgen trotzdem der Tageszeit.
+
+Der Schalter „Sonne, Mond und Nordpfeil“ im Menü blendet Nordpfeil und Mond aus und schaltet auf gleichmäßiges Licht von schräg vorn.
 
 ## Himmel und Licht
 
@@ -175,7 +178,7 @@ Der Schalter „Garten“ im Menü blendet Weg, Einfahrt, Hecke und Bäume aus. 
 Im Editor unter „Energiefluss“ Leistungssensoren für PV-Anlage, Wärmepumpe und Wallbox eintragen. Jeder ist freiwillig, angezeigt wird nur, was eingetragen ist.
 
 - Auf welchen Dachflächen die PV-Module liegen, legst du im Editor unter „Dachflächen mit PV-Modulen“ fest. Die Knöpfe zeigen die Flächen deiner Dachform mit Himmelsrichtung, berechnet aus der Ausrichtung des Hauses. Mehrere Flächen sind möglich, etwa Ost und West. Beim Walmdach stehen alle vier Flächen zur Wahl, beim Pultdach die eine. Beim Flachdach werden die Module leicht zur gewählten Seite geneigt, bei mehreren Seiten nebeneinander.
-- Ohne Auswahl liegen die Module auf der Fläche, die am meisten nach Süden zeigt, auf der Südhalbkugel nach Norden, beim Flachdach flach.
+- Ohne Auswahl liegen die Module auf der Fläche, die am meisten nach Süden zeigt, auf der Südhalbkugel nach Norden, beim Flachdach flach. Ohne festgelegten Norden liegen sie auf der unteren Fläche im Grundriss, die Knöpfe zeigen dann nur die Seiten.
 - Je mehr die Anlage liefert, desto heller leuchten die Module, gemessen an der eingetragenen Spitzenleistung.
 - Die Außeneinheit der Wärmepumpe und die Wallbox stehen an der gewählten Seite des Hauses, bezogen auf den Grundriss im Editor. Steht an der Stelle ein Anbau, rückt das Gerät vor dessen Außenwand. „Auto“ stellt die Wallbox in den Carport, sonst in die Garage, gibt es beides nicht, rechts neben das Haus.
 - Über den Modulen und jedem Gerät steht ein kleines Schild mit dem aktuellen Wert: PV, WP für die Wärmepumpe und Wallbox. Es dreht sich zum Betrachter und behält beim Zoomen seine Größe.
@@ -184,16 +187,33 @@ Im Editor unter „Energiefluss“ Leistungssensoren für PV-Anlage, Wärmepumpe
 
 Die Einheit des Sensors wird berücksichtigt, etwa W oder kW. Im Rückblick erscheinen die Stundenmittel, sofern der Sensor eine Langzeitstatistik führt. Der Schalter „Energiefluss“ im Menü blendet alles davon aus. Ist das Dach ausgeblendet, verschwinden auch die Module und ihre Leitung.
 
+## Raumeditor
+
+Im Editor unter „Grundriss, Räume und Norden“. Der Knopf „Vollbild“ macht daraus eine große Arbeitsfläche: der Plan füllt den Bildschirm, Norden, Etage, Raumliste und die Daten des gewählten Raumes stehen rechts daneben. Erlaubt der Browser kein Vollbild, füllt der Arbeitsbereich das Editorfenster. Esc oder „Vollbild beenden“ führt zurück.
+
+| Aktion | Wirkung |
+|---|---|
+| Raum ziehen | verschieben |
+| Anfasser an Ecken und Kanten ziehen | Größe ändern, die Maße stehen dabei über dem Raum |
+| In freier Fläche ein Rechteck ziehen | neuer Raum, ganz außerhalb des Hauptbaukörpers als Anbau |
+| Klick ins Leere | Auswahl aufheben |
+| Pfeiltasten | gewählten Raum um 10 cm verschieben, mit Umschalt um 1 m |
+| Entf | gewählten Raum löschen |
+| Strg+Z, Rückgängig | letzten Schritt zurücknehmen |
+| Strg+Y oder Strg+Umschalt+Z, Wiederholen | Schritt wiederherstellen |
+| Magnet | Kanten rasten an Nachbarräumen und am Hausrand ein, eine blaue Linie zeigt wo. Abseits davon gilt ein Raster von 10 cm. |
+| Räume übernehmen von | übernimmt Lage, Größe und Typ der Räume einer anderen Etage, ohne Namen, Farbe und Sensoren. Hat die Etage schon Räume, wählst du Ersetzen oder Ergänzen. |
+
+Am Mac gilt die Befehlstaste statt Strg. Die Tasten wirken, sobald du in den Plan geklickt hast. In Textfeldern bleibt das Rückgängig des Browsers.
+
+Werte lassen sich auch exakt eintippen, in den Feldern des gewählten Raumes. Raumnamen sind freiwillig. Ohne Namen zeigt die Karte „Raum 1“, „Raum 2“ und so weiter.
+
 ## Grundriss hinterlegen
 
 1. Grundriss als PNG oder JPG nach `/config/www/` legen, zum Beispiel `/config/www/grundriss_eg.png`
 2. Im Editor bei der jeweiligen Etage eintragen: `/local/grundriss_eg.png`
 3. Hausbreite und Haustiefe in Metern setzen. Das Bild wird auf diese Fläche gestreckt, es sollte den Grundriss also randlos zeigen.
-4. Räume mit „+ Raum“ hinzufügen und auf dem Bild an die richtige Stelle ziehen
-
-Rechteck ziehen verschiebt den Raum, die blaue Ecke unten rechts skaliert ihn. Werte lassen sich darunter auch exakt eintippen. Unter dem Zeichenbereich steht die Liste der Räume mit Knopf zum Löschen.
-
-Raumnamen sind freiwillig. Ohne Namen zeigt die Karte „Raum 1“, „Raum 2“ und so weiter.
+4. Räume aufziehen oder mit „+ Raum“ anlegen und an die richtige Stelle ziehen
 
 ## Anbauten
 
@@ -216,9 +236,15 @@ Freies Textfeld mit Vorschlägen. Räume ohne Sensor erscheinen in der Farbe ihr
 | Carport | offen, wird durchscheinender dargestellt |
 | Anbau | Wintergarten, Anbau |
 
-## Größe in der Abschnittsansicht
+## Größe im Dashboard
 
-Ohne Angabe ist die Karte 620 Pixel hoch. Legst du in der Abschnittsansicht eine Zeilenzahl fest, füllt die Karte genau diese Fläche aus. Ist die Karte schmaler als 640 Pixel, rutscht das Infofeld unter das Bild.
+Ab Werk ist die Karte so hoch wie der sichtbare Bereich unter der Kopfzeile.
+
+- Panel-Ansicht: Die Karte füllt die ganze Fläche des Dashboards. Dafür die Ansicht auf den Typ „Panel“ stellen.
+- Abschnittsansicht: Die Karte nimmt die ganze Breite des Abschnitts ein. Legst du eine Zeilenzahl fest, füllt sie genau diese Fläche aus.
+- In der Vorschau des Karteneditors und im Bearbeitungsmodus bleibt sie 620 Pixel hoch.
+
+Ist die Karte schmaler als 640 Pixel, rutscht das Infofeld unter das Bild.
 
 ## Konfiguration per YAML
 
@@ -239,7 +265,7 @@ roof:
 outdoor:
   temp_entity: sensor.aussentemperatur
 orientation:
-  north: 0             # Himmelsrichtung der oberen Grundrisskante in Grad
+  north_arrow: 225     # Nordpfeil im Grundriss, Grad im Uhrzeigersinn ab oben
 energy:
   pv_entity: sensor.pv_leistung
   pv_peak: 10          # Spitzenleistung in kWp
@@ -290,7 +316,7 @@ floors:
 | `roof.overhang` | 0 bis 2 | 0.4 | Dachüberstand in m |
 | `roof.axis` | x, z | x | Firstrichtung |
 | `outdoor.temp_entity` | Entität | leer | Außentemperatur |
-| `orientation.north` | 0 bis 359 | 0 | Himmelsrichtung der oberen Grundrisskante: 0 Nord, 90 Ost, 180 Süd, 270 West |
+| `orientation.north_arrow` | 0 bis 359 | leer | Richtung des Nordpfeils im Grundriss in Grad, im Uhrzeigersinn ab oben: 0 oben, 90 rechts, 180 unten, 270 links. Leer: nicht festgelegt |
 | `energy.pv_entity` | Entität | leer | Leistung der PV-Anlage |
 | `energy.pv_peak` | 0.1 bis 10000 | 10 | Spitzenleistung in kWp, bestimmt die Helligkeit der Module |
 | `energy.pv_faces` | Liste aus top, right, bottom, left | leer | Dachflächen mit Modulen, benannt nach der Seite im Grundriss, zu der die Fläche abfällt. Leer: automatisch |
@@ -342,6 +368,7 @@ Zahlen erscheinen im Format deiner Spracheinstellung in Home Assistant.
 - Mondstand und Mondphase folgen den Formeln von Astronomy Answers (aa.quae.nl), wie sie auch die Bibliothek SunCalc verwendet.
 - Wird die Karte länger als 15 Sekunden nicht angezeigt, gibt sie die 3D-Grafik frei. So stößt der Browser nicht an seine Grenze für gleichzeitige 3D-Ansichten.
 - Der Editor verwendet eigene Eingabefelder und ist nicht auf interne Elemente von Home Assistant angewiesen.
+- Die frühere Angabe `orientation.north`, die Himmelsrichtung der oberen Grundrisskante, wird weiter gelesen und in den Nordpfeil umgerechnet. Den früheren Standardwert 0 hatte der Editor ungefragt gesetzt, er gilt deshalb als nicht festgelegt.
 
 ## Lizenz
 
