@@ -1,6 +1,6 @@
 # 3D Energy House
 
-Drehbare 3D-Darstellung eines Einfamilienhauses für Home Assistant, mit Etagen, Dachform, Raumtemperaturen, Luftfeuchtigkeit, Außentemperatur, Temperaturschwankung, Rückblick, offenen Fenstern, Sonnenstand und Energiefluss.
+Drehbare 3D-Darstellung eines Einfamilienhauses für Home Assistant, mit Etagen, Dachform, Raumtemperaturen, Luftfeuchtigkeit, Außentemperatur, Temperaturschwankung, Rückblick, offenen Fenstern, Sonnenstand, Energiefluss, Garten und Himmel nach Tageszeit.
 
 ## Funktionen
 
@@ -13,9 +13,13 @@ Drehbare 3D-Darstellung eines Einfamilienhauses für Home Assistant, mit Etagen,
 - Außentemperatur im Infofeld und als Tafel vor dem Haus
 - Beschriftung flach auf dem Raumboden, dreht sich mit dem Haus
 - Rückblick mit Schieberegler und Abspielen-Knopf
-- Etagen per Schieberegler auseinanderziehen
+- Fünf Darstellungen im Menü umschaltbar: Puppenhaus, Wärmebild, Hologramm, Säulen und Klassisch
+- Etagen per Knopf animiert auseinander- und zusammenfahren, feiner per Schieberegler
+- Himmel nach Tageszeit mit ziehenden Wolken, Abendrot und Sternen
+- Nachts warmes Licht in den Räumen und vor den Außenwänden
+- Garten mit Rasen, Hecke und Bäumen, Weg zum Flur und Einfahrt zum Carport
 - Offene Fenster und Türen markieren den Raum
-- Nordpfeil und Sonnenstand passend zur Uhrzeit
+- Nordpfeil, Sonne und Mond mit Phase passend zur Uhrzeit
 - Energiefluss: PV-Module auf dem Dach, Wärmepumpe und Wallbox mit Live-Werten
 - Haus wird automatisch mittig ausgerichtet und lässt sich jederzeit verschieben
 - Menü links zum Aufklappen, ab Werk geschlossen
@@ -54,11 +58,13 @@ Wichtig: Die Karte nur auf einem Weg einbinden. Ist sie zusätzlich über `extra
 | Zentrieren | Haus wieder mittig ausrichten |
 | Klick auf einen Raum | Raum auswählen, Details rechts |
 | Schieberegler unten | Transparenz |
-| Etagen auseinander im Menü | hebt Etagen und Dach an |
+| Etagen | fährt die Etagen animiert auseinander und wieder zusammen |
+| Etagen auseinander im Menü | hebt Etagen und Dach stufenlos an |
+| Darstellung im Menü | wechselt die Darstellung |
 
 Das Mausrad zoomt erst nach einem Klick ins Bild. Sonst bliebe das Scrollen der Seite an der Karte hängen, sobald der Mauszeiger darüber liegt.
 
-Solange weder verschoben noch gezoomt wurde, richtet sich das Haus bei jeder Größenänderung neu mittig aus. Dabei zählen auch Anbauten, die Tafel der Außentemperatur, der Nordpfeil sowie Geräte und Schilder des Energieflusses.
+Solange weder verschoben noch gezoomt wurde, richtet sich das Haus bei jeder Größenänderung neu mittig aus. Dabei zählen auch Anbauten, die Tafel der Außentemperatur, der Nordpfeil sowie Geräte und Schilder des Energieflusses. Der Garten zählt nicht dazu.
 
 ## Anzeigearten
 
@@ -108,7 +114,23 @@ Voraussetzungen:
 
 Fehlt etwas, nennt die Leiste den Grund.
 
+## Darstellungen
+
+Im Menü unter „Darstellung“ lässt sich jederzeit umschalten. Welche beim Öffnen gilt, legst du im Editor unter „Darstellung beim Öffnen“ fest.
+
+| Darstellung | Aussehen |
+|---|---|
+| Puppenhaus | Echte Wände, halbhoch aufgeschnitten wie ein Modellhaus. Böden aus Holz, in Bad, Küche und Wirtschaftsraum Fliesen, in Garage und Carport Beton. Die Temperatur liegt als farbiger Schein auf dem Boden, das Haus wirft Schatten nach Sonnenstand. Standard. |
+| Wärmebild | Wie eine Wärmebildkamera: Der Boden zeigt den Verlauf, zu den Nachbarräumen geht es weich über, warme Luft steigt als leuchtender Schleier auf. Räume ohne Sensor sind schraffiert. Die Legende zeigt den Farbverlauf. |
+| Hologramm | Leuchtende Kanten, ein Raster am Boden und je Raum eine Lichtsäule, je wärmer desto höher, mit dem Wert darüber. Eine Scanebene wandert langsam auf und ab. |
+| Säulen | Helle Tafeln je Raum, die Temperatur als farbige Säule mit Wert darüber, je wärmer desto höher, mit Schatten. |
+| Klassisch | Die bisherige Darstellung mit durchscheinenden, farbigen Räumen. Nur hier erscheint das Grundriss-Bild. |
+
+In allen Darstellungen gelten die Anzeigearten, die Farben der Legende, die Auswahl per Antippen und die rote Markierung offener Fenster. Der Schieberegler Transparenz steuert vor allem das Dach.
+
 ## Etagen auseinanderziehen
+
+Der Knopf „Etagen“ oben fährt die Etagen weich auseinander, das Dach hebt ab und neben jeder Etage erscheint ihr Name. Ein zweiter Druck fährt sie wieder zusammen. Die Kamera folgt, solange du nicht selbst verschoben oder gezoomt hast.
 
 Bei mehr als einer Etage steht im Menü der Schieberegler „Etagen auseinander“. Er hebt die oberen Etagen und das Dach an, bis zu 3,5 m zusätzlich je Etage. So werden die Räume darunter frei sichtbar. Räume lassen sich dabei weiter antippen.
 
@@ -118,21 +140,45 @@ Je Raum lassen sich im Editor beliebig viele Kontakte hinterlegen, etwa `binary_
 
 Kontakte haben keine Langzeitstatistik. Im Rückblick erscheinen sie deshalb nicht.
 
-## Nordpfeil und Sonne
+## Nordpfeil, Sonne und Mond
 
 Im Editor unter „Ausrichtung für Nordpfeil und Sonne“ angeben, in welche Himmelsrichtung die obere Kante des Grundrisses zeigt. Ein Nordpfeil liegt dann vorne links am Boden.
 
 Die Sonne steht als gelbe Kugel am Himmel, berechnet aus Uhrzeit und dem Standort in den Einstellungen von Home Assistant, und beleuchtet das Haus aus dieser Richtung. Nachts ist sie ausgeblendet, das Haus bleibt trotzdem gut lesbar. Im Rückblick wandert sie mit der gewählten Stunde. Ist kein Standort hinterlegt, verwendet die Karte in der Live-Ansicht die Entität `sun.sun`.
 
-Nordpfeil und Sonne lassen sich im Menü ausblenden.
+Der Mond steht in seiner Himmelsrichtung und zeigt die aktuelle Phase, auf der Südhalbkugel gespiegelt. Ist er nachts über dem Horizont, kommt das schwache, kühle Nachtlicht aus seiner Richtung, bei Vollmond etwas heller. Der Mond braucht den Standort in den Einstellungen von Home Assistant.
+
+Der Schalter „Sonne, Mond und Nordpfeil“ im Menü blendet alles davon aus.
+
+## Himmel und Licht
+
+Der Himmel wechselt mit der Sonnenhöhe zwischen Tag, Dämmerung und Nacht. Am Horizont ziehen Wolken langsam vorbei, mittags weiß, bei Sonnenuntergang rosa, nachts dunkel. Steht die Sonne tief, wird ihr Licht warm. In der Dämmerung erscheinen nach und nach die Sterne.
+
+Ab Sonnenuntergang leuchten die Räume warm von innen, und vor den Außenwänden des Erdgeschosses fällt Licht auf den Boden. Garage, Carport und Abstellraum bleiben dunkel. Im Wärmebild und im Hologramm leuchten die Räume nicht zusätzlich, dort bleibt auch der Garten gedämpft, damit die Werte hervortreten.
+
+Im Rückblick folgen Himmel, Mond und Licht der gewählten Stunde. Ohne Standort und ohne `sun.sun` bleibt der Himmel neutral dunkel, ohne Wolken und Sterne.
+
+## Garten
+
+Rund um das Haus liegt ein Grundstück mit Rasen und Hecke.
+
+- Ein gepflasterter Weg führt zum Raum vom Typ Flur, an dessen erste Außenwand, geprüft in der Reihenfolge unten, rechts, links, oben im Grundriss. Ohne Flur mit Außenwand führt er an der unteren Seite zur Mitte des Hauses.
+- Steht an dieser Stelle die Wärmepumpe oder die Wallbox, rückt der Weg an der Wand entlang zur Seite.
+- Eine Einfahrt führt an die kurze Seite des Carports, ohne Carport an die der Garage. Ohne beides gibt es keine Einfahrt.
+- Bis zu fünf Bäume stehen dort, wo Platz ist. Die Ecke unten rechts im Grundriss bleibt frei, von dort blickt die Standardansicht auf das Haus.
+- Die Tafel der Außentemperatur weicht Weg und Einfahrt aus.
+
+Der Schalter „Garten“ im Menü blendet Weg, Einfahrt, Hecke und Bäume aus. Der Boden wird dann zur ruhigen Fläche in der Farbe des Himmels.
 
 ## Energiefluss
 
 Im Editor unter „Energiefluss“ Leistungssensoren für PV-Anlage, Wärmepumpe und Wallbox eintragen. Jeder ist freiwillig, angezeigt wird nur, was eingetragen ist.
 
-- PV-Module liegen auf der Dachfläche, die am meisten nach Süden zeigt, auf der Südhalbkugel nach Norden. Dafür muss die Ausrichtung stimmen. Je mehr die Anlage liefert, desto heller leuchten die Module, gemessen an der eingetragenen Spitzenleistung.
+- Auf welchen Dachflächen die PV-Module liegen, legst du im Editor unter „Dachflächen mit PV-Modulen“ fest. Die Knöpfe zeigen die Flächen deiner Dachform mit Himmelsrichtung, berechnet aus der Ausrichtung des Hauses. Mehrere Flächen sind möglich, etwa Ost und West. Beim Walmdach stehen alle vier Flächen zur Wahl, beim Pultdach die eine. Beim Flachdach werden die Module leicht zur gewählten Seite geneigt, bei mehreren Seiten nebeneinander.
+- Ohne Auswahl liegen die Module auf der Fläche, die am meisten nach Süden zeigt, auf der Südhalbkugel nach Norden, beim Flachdach flach.
+- Je mehr die Anlage liefert, desto heller leuchten die Module, gemessen an der eingetragenen Spitzenleistung.
 - Die Außeneinheit der Wärmepumpe und die Wallbox stehen an der gewählten Seite des Hauses, bezogen auf den Grundriss im Editor. Steht an der Stelle ein Anbau, rückt das Gerät vor dessen Außenwand. „Auto“ stellt die Wallbox in den Carport, sonst in die Garage, gibt es beides nicht, rechts neben das Haus.
-- Über jedem Gerät steht ein Schild mit dem aktuellen Wert. Es dreht sich immer zum Betrachter.
+- Über den Modulen und jedem Gerät steht ein kleines Schild mit dem aktuellen Wert: PV, WP für die Wärmepumpe und Wallbox. Es dreht sich zum Betrachter und behält beim Zoomen seine Größe.
 - Leitungen mit wandernden Punkten zeigen die Richtung: von den Modulen ins Haus, vom Haus zur Wärmepumpe und zur Wallbox. Mehr Leistung bedeutet schnellere Punkte. Unter 5 W ruht der Fluss und das Schild wird grau.
 - Im Infofeld steht der Kasten „Energie“ mit allen Werten.
 
@@ -181,6 +227,7 @@ type: custom:house-3d-card
 title: Raumklima
 opacity: 40
 display: temp          # temp, hum, both, fluct
+style: dollhouse       # dollhouse, thermal, hologram, columns, classic
 house:
   width: 12
   depth: 10
@@ -196,6 +243,7 @@ orientation:
 energy:
   pv_entity: sensor.pv_leistung
   pv_peak: 10          # Spitzenleistung in kWp
+  pv_faces: [bottom]   # Dachflächen mit Modulen: top, right, bottom, left
   heatpump_entity: sensor.waermepumpe_leistung
   heatpump_side: right # top, right, bottom, left
   wallbox_entity: sensor.wallbox_leistung
@@ -234,6 +282,7 @@ floors:
 | `title` | Text | leer | Überschrift |
 | `opacity` | 5 bis 100 | 40 | Transparenz der Räume in Prozent |
 | `display` | temp, hum, both, fluct | temp | Anzeige beim Öffnen |
+| `style` | dollhouse, thermal, hologram, columns, classic | dollhouse | Darstellung beim Öffnen: Puppenhaus, Wärmebild, Hologramm, Säulen, Klassisch |
 | `house.width` | 3 bis 40 | 12 | Hausbreite in m |
 | `house.depth` | 3 bis 40 | 10 | Haustiefe in m |
 | `roof.type` | flat, gable, hip, mono | gable | Dachform |
@@ -244,6 +293,7 @@ floors:
 | `orientation.north` | 0 bis 359 | 0 | Himmelsrichtung der oberen Grundrisskante: 0 Nord, 90 Ost, 180 Süd, 270 West |
 | `energy.pv_entity` | Entität | leer | Leistung der PV-Anlage |
 | `energy.pv_peak` | 0.1 bis 10000 | 10 | Spitzenleistung in kWp, bestimmt die Helligkeit der Module |
+| `energy.pv_faces` | Liste aus top, right, bottom, left | leer | Dachflächen mit Modulen, benannt nach der Seite im Grundriss, zu der die Fläche abfällt. Leer: automatisch |
 | `energy.heatpump_entity` | Entität | leer | Leistung der Wärmepumpe |
 | `energy.heatpump_side` | top, right, bottom, left | right | Seite im Grundriss |
 | `energy.wallbox_entity` | Entität | leer | Leistung der Wallbox |
@@ -287,7 +337,9 @@ Zahlen erscheinen im Format deiner Spracheinstellung in Home Assistant.
 ## Technische Hinweise
 
 - Three.js 0.160.0 wird zur Laufzeit von `unpkg.com` geladen, ersatzweise von `cdn.jsdelivr.net`. Ohne Internetzugang im Browser erscheint eine Fehlermeldung in der Karte.
-- Gezeichnet wird nur, wenn sich etwas ändert. Ausnahmen sind die Dauerdrehung und ein laufender Energiefluss, dieser mit etwa 25 Bildern pro Sekunde. Beides pausiert außerhalb des sichtbaren Bereichs.
+- Gezeichnet wird nur, wenn sich etwas ändert. Ausnahmen sind die Dauerdrehung, ein laufender Energiefluss und die Scanebene im Hologramm, diese mit etwa 25 Bildern pro Sekunde. Alles davon pausiert außerhalb des sichtbaren Bereichs.
+- Puppenhaus und Säulen berechnen Schatten, auch von Hecke und Bäumen. Auf sehr schwachen Geräten sind Wärmebild, Hologramm oder Klassisch sparsamer.
+- Mondstand und Mondphase folgen den Formeln von Astronomy Answers (aa.quae.nl), wie sie auch die Bibliothek SunCalc verwendet.
 - Wird die Karte länger als 15 Sekunden nicht angezeigt, gibt sie die 3D-Grafik frei. So stößt der Browser nicht an seine Grenze für gleichzeitige 3D-Ansichten.
 - Der Editor verwendet eigene Eingabefelder und ist nicht auf interne Elemente von Home Assistant angewiesen.
 

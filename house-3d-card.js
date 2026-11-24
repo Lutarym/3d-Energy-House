@@ -2,10 +2,10 @@
  * 3D Energy House
  * Lovelace-Karte für Home Assistant: drehbares 3D-Haus mit Etagen und Dachform,
  * Temperatur, Luftfeuchtigkeit, Außentemperatur, Schwankung, Rückblick,
- * offenen Fenstern, Sonnenstand und Energiefluss.
+ * offenen Fenstern, Sonnenstand, Energiefluss, fünf Darstellungen und Garten.
  */
 
-const VERSION = '4.1.0';
+const VERSION = '4.4.0';
 const CARD_TAG = 'house-3d-card';
 const EDITOR_TAG = 'house-3d-card-editor';
 
@@ -94,11 +94,74 @@ const SIDES = [
   { value: 'bottom', label: 'Unten' },
   { value: 'left',   label: 'Links' }
 ];
+// label im Infofeld, tag auf dem kleinen Schild im Bild
 const ENERGY_ITEMS = [
-  { key: 'pv', field: 'pv_entity',       label: 'PV',         color: 0xffc400 },
-  { key: 'hp', field: 'heatpump_entity', label: 'Wärmepumpe', color: 0x4fc3f7 },
-  { key: 'wb', field: 'wallbox_entity',  label: 'Wallbox',    color: 0x7ed957 }
+  { key: 'pv', field: 'pv_entity',       label: 'PV',         tag: 'PV',      color: 0xffc400 },
+  { key: 'hp', field: 'heatpump_entity', label: 'Wärmepumpe', tag: 'WP',      color: 0x4fc3f7 },
+  { key: 'wb', field: 'wallbox_entity',  label: 'Wallbox',    tag: 'Wallbox', color: 0x7ed957 }
 ];
+const TAG_PX = 22;             // Höhe der Energieschilder in Bildpunkten
+// Himmelsrichtung, in die eine Seite des Grundrisses zeigt, wenn oben Norden ist
+const SIDE_AZ = { top: 0, right: 90, bottom: 180, left: 270 };
+const COMPASS8 = ['Nord', 'Nordost', 'Ost', 'Südost', 'Süd', 'Südwest', 'West', 'Nordwest'];
+
+// Darstellungen der Karte, im Menü umschaltbar
+const STYLES = [
+  { value: 'dollhouse', label: 'Puppenhaus' },
+  { value: 'thermal',   label: 'Wärmebild' },
+  { value: 'hologram',  label: 'Hologramm' },
+  { value: 'columns',   label: 'Säulen' },
+  { value: 'classic',   label: 'Klassisch' }
+];
+const TAG_STYLES = ['hologram', 'columns'];        // Werte stehen auf Schildern über dem Raum
+const SHADOW_STYLES = ['dollhouse', 'columns'];    // mit Schatten nach Sonnenstand
+// Farbverlauf einer Wärmebildkamera, von kalt nach warm
+const IR_STOPS = [[0, 0x05010f], [0.15, 0x26105e], [0.32, 0x62198e], [0.48, 0xae2671],
+  [0.62, 0xe8503a], [0.78, 0xf8962b], [0.9, 0xfde35a], [1, 0xfffbe6]];
+const HOLO_CYAN = 0x38e1ff;
+
+// Himmel und Boden nach Sonnenhöhe in Grad: top oben am Himmel, hor am Horizont,
+// ground der Boden. Dazwischen wird gleitend gemischt.
+// cloud ist die Farbe der Wolken, ca ihre Menge
+const SKY_KEYS = [
+  { el: -12, top: 0x050814, hor: 0x111a2e, ground: 0x14181c, cloud: 0x1c2236, ca: 0.3 },
+  { el: -4,  top: 0x0c1530, hor: 0x2a2f4d, ground: 0x1b1f24, cloud: 0x7a4f6e, ca: 0.5 },
+  { el: 0,   top: 0x1d2c55, hor: 0xd98a5f, ground: 0x2c302f, cloud: 0xff8fa0, ca: 0.85 },
+  { el: 6,   top: 0x325d99, hor: 0xe9c49a, ground: 0x3e463f, cloud: 0xffe6c8, ca: 0.85 },
+  { el: 20,  top: 0x2f6db5, hor: 0xbcd7ef, ground: 0x4b574d, cloud: 0xffffff, ca: 0.8 }
+];
+// Ohne Standort und ohne sun.sun bleibt es beim neutralen dunklen Grund ohne Wolken
+const SKY_NONE = { top: 0x12141a, hor: 0x1d222b, ground: 0x1c2026, cloud: 0x2a2f3a, ca: 0 };
+
+const SKY_VS = `
+varying vec3 vDir;
+void main() {
+  vDir = normalize(position);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+const SKY_FS = `
+uniform vec3 top;
+uniform vec3 hor;
+uniform vec3 low;
+uniform sampler2D clouds;
+uniform vec3 cloudCol;
+uniform float cloudAmt;
+uniform float cloudShift;
+varying vec3 vDir;
+void main() {
+  vec3 d = normalize(vDir);
+  float h = d.y;
+  vec3 c = h > 0.0 ? mix(hor, top, pow(min(1.0, h * 1.6), 0.7)) : mix(hor, low, min(1.0, -h * 4.0));
+  float v = (h + 0.22) / 0.5;
+  if (cloudAmt > 0.0 && v > 0.0 && v < 1.0) {
+    float u = atan(d.x, -d.z) / 6.2831853 + 0.5 + cloudShift;
+    vec4 w = texture2D(clouds, vec2(u, v));
+    float a = w.a * cloudAmt * smoothstep(0.0, 0.14, v) * (1.0 - smoothstep(0.6, 1.0, v));
+    c = mix(c, cloudCol * w.rgb, a);
+  }
+  gl_FragColor = vec4(c, 1.0);
+  #include <colorspace_fragment>
+}`;
 
 // Gespeicherte Blickwinkel je Karte, damit ein Neuaufbau die Ansicht behält
 const VIEW_STORE = new Map();
@@ -388,11 +451,12 @@ const DEFAULT_CONFIG = () => ({
   title: '',
   opacity: 40,
   display: 'temp',
+  style: 'dollhouse',
   house: { width: 12, depth: 10 },
   roof: { type: 'gable', height: 3, overhang: 0.4, axis: 'x' },
   outdoor: { temp_entity: '' },
   orientation: { north: 0 },
-  energy: { pv_entity: '', pv_peak: 10, heatpump_entity: '', heatpump_side: 'right', wallbox_entity: '', wallbox_side: 'auto' },
+  energy: { pv_entity: '', pv_peak: 10, pv_faces: [], heatpump_entity: '', heatpump_side: 'right', wallbox_entity: '', wallbox_side: 'auto' },
   fluctuation: { hours: 24 },
   history: { hours: 0 },
   floors: [
@@ -437,12 +501,372 @@ function readPower(st) {
   return toWatts(st.state, st.attributes && st.attributes.unit_of_measurement);
 }
 
+function skyAt(el) {
+  if (typeof el !== 'number' || isNaN(el)) return SKY_NONE;
+  const k = SKY_KEYS;
+  if (el <= k[0].el) return k[0];
+  for (let i = 1; i < k.length; i++) {
+    if (el <= k[i].el) {
+      const t = (el - k[i - 1].el) / (k[i].el - k[i - 1].el);
+      return {
+        top: mixColor(k[i - 1].top, k[i].top, t),
+        hor: mixColor(k[i - 1].hor, k[i].hor, t),
+        ground: mixColor(k[i - 1].ground, k[i].ground, t),
+        cloud: mixColor(k[i - 1].cloud, k[i].cloud, t),
+        ca: k[i - 1].ca + (k[i].ca - k[i - 1].ca) * t
+      };
+    }
+  }
+  return k[k.length - 1];
+}
+
+function compassName(az) {
+  return COMPASS8[Math.round((((az % 360) + 360) % 360) / 45) % 8];
+}
+
+// Seiten im Grundriss, zu denen die Dachflächen einer Dachform abfallen.
+// Das Flachdach bekommt aufgeständerte Module, dort ist jede Seite möglich.
+function pvSidesFor(roof) {
+  if (roof.type === 'gable') return roof.axis === 'z' ? ['left', 'right'] : ['top', 'bottom'];
+  if (roof.type === 'mono') return roof.axis === 'z' ? ['left'] : ['top'];
+  return ['top', 'right', 'bottom', 'left'];
+}
+
 // Mischfarbe zwischen a und b, t von 0 bis 1
 function mixColor(a, b, t) {
   const k = clamp(t, 0, 1);
   const ch = (c, sh) => (c >> sh) & 255;
   const m = (sh) => Math.round(ch(a, sh) + (ch(b, sh) - ch(a, sh)) * k);
   return (m(16) << 16) | (m(8) << 8) | m(0);
+}
+
+// Farbe auf einem Verlauf aus Paaren von Anteil und Farbe, v von 0 bis 1
+function rampHex(stops, v) {
+  const x = clamp(v, 0, 1);
+  for (let i = 1; i < stops.length; i++) {
+    if (x <= stops[i][0]) return mixColor(stops[i - 1][1], stops[i][1], (x - stops[i - 1][0]) / (stops[i][0] - stops[i - 1][0]));
+  }
+  return stops[stops.length - 1][1];
+}
+
+// Wandstücke aus den Raumrechtecken. Gemeinsame Kanten zählen einmal, n gleich 1
+// bedeutet Außenwand. Kanten, die nur offene Räume wie den Carport begrenzen,
+// bleiben ohne Wand.
+function wallSegments(rooms) {
+  const m = new Map();
+  rooms.forEach((o) => {
+    [[o.x0, o.z0, o.x1, o.z0], [o.x1, o.z0, o.x1, o.z1], [o.x0, o.z1, o.x1, o.z1], [o.x0, o.z0, o.x0, o.z1]].forEach((s) => {
+      const k = s.map((v) => v.toFixed(2)).join(',');
+      const cur = m.get(k);
+      if (cur) {
+        cur.n++;
+        cur.open = cur.open && o.open;
+      } else {
+        m.set(k, { s: s, n: 1, open: o.open });
+      }
+    });
+  });
+  return [...m.values()];
+}
+
+// Bodenart nach Raumtyp: Fliesen in Bad, Küche und Wirtschaftsraum, Beton in
+// Garage und Carport, sonst Holz
+function floorKind(type) {
+  const t = findRoomType(type);
+  const v = t ? t.value : '';
+  if (v === 'bath' || v === 'kitchen' || v === 'utility') return 'tile';
+  if (v === 'garage' || v === 'carport') return 'concrete';
+  return 'wood';
+}
+
+// Zeichenflächen werden einmal je Seite erzeugt und von allen Karten geteilt
+const CANVAS_CACHE = {};
+function cachedCanvas(key, w, h, draw) {
+  if (!CANVAS_CACHE[key]) {
+    const cv = document.createElement('canvas');
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext('2d');
+    if (ctx) draw(ctx);
+    CANVAS_CACHE[key] = cv;
+  }
+  return CANVAS_CACHE[key];
+}
+
+function gradientFill(ctx, g, stops, fallback) {
+  if (g && typeof g.addColorStop === 'function') {
+    stops.forEach((s) => g.addColorStop(s[0], s[1]));
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = fallback;
+  }
+}
+
+function floorCanvas(kind) {
+  return cachedCanvas('floor-' + kind, 256, 256, (x) => {
+    if (kind === 'wood') {
+      x.fillStyle = '#c69c6d';
+      x.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 8; i++) {
+        const l = 0.92 + ((i * 37) % 10) / 50;
+        x.fillStyle = 'rgba(' + Math.round(150 * l) + ',' + Math.round(105 * l) + ',' + Math.round(62 * l) + ',0.35)';
+        x.fillRect(0, i * 32, 256, 32);
+        x.fillStyle = 'rgba(70,45,25,0.55)';
+        x.fillRect(0, i * 32, 256, 2);
+        x.fillRect((i * 97) % 256, i * 32, 2, 32);
+        x.strokeStyle = 'rgba(90,60,30,0.18)';
+        for (let k = 0; k < 4; k++) {
+          const yy = i * 32 + 6 + k * 7;
+          x.beginPath();
+          x.moveTo(0, yy);
+          x.bezierCurveTo(80, yy + 3, 170, yy - 3, 256, yy + 1);
+          x.stroke();
+        }
+      }
+      return;
+    }
+    x.fillStyle = kind === 'tile' ? '#e3e7ec' : '#a9adb2';
+    x.fillRect(0, 0, 256, 256);
+    x.strokeStyle = kind === 'tile' ? '#b8c0ca' : '#94989e';
+    x.lineWidth = 3;
+    for (let i = 0; i <= 256; i += 64) {
+      x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 256); x.stroke();
+      x.beginPath(); x.moveTo(0, i); x.lineTo(256, i); x.stroke();
+    }
+  });
+}
+
+// Runder Schein, innen kräftig, zum Rand durchsichtig
+function radialCanvas() {
+  return cachedCanvas('radial', 256, 256, (x) => {
+    const g = typeof x.createRadialGradient === 'function' ? x.createRadialGradient(128, 128, 0, 128, 128, 128) : null;
+    gradientFill(x, g, [[0, 'rgba(255,255,255,1)'], [0.45, 'rgba(255,255,255,0.7)'], [1, 'rgba(255,255,255,0)']], 'rgba(255,255,255,0.6)');
+    x.fillRect(0, 0, 256, 256);
+  });
+}
+
+// Unten deckend, nach oben auslaufend
+function riseCanvas() {
+  return cachedCanvas('rise', 4, 256, (x) => {
+    const g = typeof x.createLinearGradient === 'function' ? x.createLinearGradient(0, 0, 0, 256) : null;
+    gradientFill(x, g, [[0, 'rgba(255,255,255,0)'], [0.6, 'rgba(255,255,255,0.25)'], [1, 'rgba(255,255,255,1)']], 'rgba(255,255,255,0.5)');
+    x.fillRect(0, 0, 4, 256);
+  });
+}
+
+// Ein Meter Raster mit feiner Mittellinie
+function holoGridCanvas() {
+  return cachedCanvas('holo', 128, 128, (x) => {
+    x.clearRect(0, 0, 128, 128);
+    x.strokeStyle = 'rgba(255,255,255,0.9)';
+    x.lineWidth = 2;
+    x.strokeRect(1, 1, 126, 126);
+    x.strokeStyle = 'rgba(255,255,255,0.35)';
+    x.lineWidth = 1;
+    x.beginPath();
+    x.moveTo(64, 0); x.lineTo(64, 128);
+    x.moveTo(0, 64); x.lineTo(128, 64);
+    x.stroke();
+  });
+}
+
+// Wärmebild eines Grundrisses als Bildpunkte. Im Raum überwiegt sein eigener
+// Wert, zu den Nachbarn hin geht es weich über. Räume ohne Wert sind schraffiert.
+function heatPixels(rooms, x0, z0, ppm, W, H) {
+  const buf = new Uint8ClampedArray(W * H * 4);
+  const known = rooms.filter((o) => o.v !== null);
+  for (let j = 0; j < H; j++) {
+    const pz = z0 + (j + 0.5) / ppm;
+    for (let i = 0; i < W; i++) {
+      const px = x0 + (i + 0.5) / ppm;
+      let own = null;
+      for (const o of rooms) {
+        if (px >= o.x0 && px <= o.x1 && pz >= o.z0 && pz <= o.z1) { own = o; break; }
+      }
+      if (!own) continue;
+      const k = (j * W + i) * 4;
+      let r, g, b;
+      if (own.v === null || !known.length) {
+        const hatch = ((i + j) % 14) < 2;
+        r = hatch ? 70 : 28; g = hatch ? 74 : 30; b = hatch ? 86 : 38;
+      } else {
+        let sw = 0, sv = 0;
+        for (const o of known) {
+          const dx = Math.max(o.x0 - px, 0, px - o.x1);
+          const dz = Math.max(o.z0 - pz, 0, pz - o.z1);
+          const dc = (px - o.cx) * (px - o.cx) + (pz - o.cz) * (pz - o.cz);
+          const w = (o === own ? 3 : 1) / (dx * dx + dz * dz + 0.15 * dc + 0.25);
+          sw += w;
+          sv += w * o.v;
+        }
+        // Leichtes Rauschen wie bei einer echten Wärmebildkamera
+        const n = Math.sin(i * 12.9898 + j * 78.233) * 43758.5453;
+        const hex = rampHex(IR_STOPS, sv / sw + (n - Math.floor(n) - 0.5) * 0.02);
+        r = (hex >> 16) & 255; g = (hex >> 8) & 255; b = hex & 255;
+      }
+      buf[k] = r; buf[k + 1] = g; buf[k + 2] = b; buf[k + 3] = 255;
+    }
+  }
+  return buf;
+}
+
+// Reproduzierbare Zufallszahlen, damit Sterne, Wolken und Bäume immer gleich liegen
+function seeded(seed) {
+  let s = (seed >>> 0) || 1;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+// Mondstand mit Azimut ab Norden. Vereinfachte Formeln von Astronomy Answers
+// (aa.quae.nl), wie sie auch die Bibliothek SunCalc verwendet.
+function moonPosition(ms, lat, lon) {
+  const rad = Math.PI / 180;
+  const d = ms / 86400000 - 10957.5;
+  const e = rad * 23.4397;
+  const L = rad * (218.316 + 13.176396 * d);
+  const M = rad * (134.963 + 13.064993 * d);
+  const F = rad * (93.272 + 13.229350 * d);
+  const l = L + rad * 6.289 * Math.sin(M);
+  const b = rad * 5.128 * Math.sin(F);
+  const ra = Math.atan2(Math.sin(l) * Math.cos(e) - Math.tan(b) * Math.sin(e), Math.cos(l));
+  const dec = Math.asin(Math.sin(b) * Math.cos(e) + Math.cos(b) * Math.sin(e) * Math.sin(l));
+  const H = rad * (280.16 + 360.9856235 * d) + rad * lon - ra;
+  const phi = rad * lat;
+  let h = Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(H));
+  const hr = Math.max(h, 0);
+  h += 0.0002967 / Math.tan(hr + 0.00312536 / (hr + 0.08901179));   // Lichtbrechung am Horizont
+  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi)) + Math.PI;
+  return { azimuth: ((az / rad) % 360 + 360) % 360, elevation: h / rad };
+}
+
+// Beleuchteter Anteil des Mondes und ob er zunimmt
+function moonIllumination(ms) {
+  const rad = Math.PI / 180;
+  const d = ms / 86400000 - 10957.5;
+  const e = rad * 23.4397;
+  const ra = (l, b) => Math.atan2(Math.sin(l) * Math.cos(e) - Math.tan(b) * Math.sin(e), Math.cos(l));
+  const de = (l, b) => Math.asin(Math.sin(b) * Math.cos(e) + Math.cos(b) * Math.sin(e) * Math.sin(l));
+  const Ms = rad * (357.5291 + 0.98560028 * d);
+  const Ls = Ms + rad * (1.9148 * Math.sin(Ms) + 0.02 * Math.sin(2 * Ms) + 0.0003 * Math.sin(3 * Ms)) + rad * 102.9372 + Math.PI;
+  const sRa = ra(Ls, 0), sDec = de(Ls, 0);
+  const M = rad * (134.963 + 13.064993 * d);
+  const l = rad * (218.316 + 13.176396 * d) + rad * 6.289 * Math.sin(M);
+  const b = rad * 5.128 * Math.sin(rad * (93.272 + 13.229350 * d));
+  const mRa = ra(l, b), mDec = de(l, b);
+  const mDist = 385001 - 20905 * Math.cos(M);
+  const sDist = 149598000;
+  const phi = Math.acos(Math.sin(sDec) * Math.sin(mDec) + Math.cos(sDec) * Math.cos(mDec) * Math.cos(sRa - mRa));
+  const inc = Math.atan2(sDist * Math.sin(phi), mDist - sDist * Math.cos(phi));
+  const angle = Math.atan2(Math.cos(sDec) * Math.sin(sRa - mRa),
+    Math.sin(sDec) * Math.cos(mDec) - Math.cos(sDec) * Math.sin(mDec) * Math.cos(sRa - mRa));
+  return { fraction: (1 + Math.cos(inc)) / 2, waxing: angle < 0 };
+}
+
+// Mondscheibe mit Phase. Auf der Nordhalbkugel ist der zunehmende Mond rechts hell.
+function drawMoon(ctx, size, fraction, waxing, south) {
+  const c = size / 2, r = size / 2 - 4;
+  ctx.clearRect(0, 0, size, size);
+  ctx.fillStyle = 'rgba(170,180,200,0.22)';
+  ctx.beginPath();
+  ctx.arc(c, c, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.save();
+  if (waxing === south) {
+    ctx.translate(size, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.fillStyle = '#f4f1e6';
+  ctx.beginPath();
+  ctx.arc(c, c, r, -Math.PI / 2, Math.PI / 2, false);
+  if (typeof ctx.ellipse === 'function') ctx.ellipse(c, c, r * Math.abs(1 - 2 * fraction), r, 0, Math.PI / 2, -Math.PI / 2, fraction < 0.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function grayHex(v) {
+  const g = Math.round(clamp(v, 0, 1) * 255);
+  return (g << 16) | (g << 8) | g;
+}
+
+// Wolkenband rund um den Horizont, nahtlos in der Breite
+function cloudCanvas() {
+  return cachedCanvas('clouds', 1024, 128, (x) => {
+    x.clearRect(0, 0, 1024, 128);
+    const rnd = seeded(11);
+    // Jede Wolke aus mehreren Ballen, unten ein grauer Schatten, oben hell
+    const puff = (bx, by, br, inner, outer) => {
+      [-1024, 0, 1024].forEach((dx) => {
+        const g = typeof x.createRadialGradient === 'function' ? x.createRadialGradient(bx + dx, by, 0, bx + dx, by, br) : null;
+        gradientFill(x, g, [[0, inner], [1, outer]], inner);
+        x.beginPath();
+        x.arc(bx + dx, by, br, 0, Math.PI * 2);
+        x.fill();
+      });
+    };
+    for (let c = 0; c < 20; c++) {
+      const cx = rnd() * 1024, cy = 34 + rnd() * 72, sz = 9 + rnd() * 13;
+      const n = 5 + Math.floor(rnd() * 6);
+      const balls = [];
+      for (let k = 0; k < n; k++) {
+        balls.push([cx + (rnd() - 0.5) * sz * 5, cy + (rnd() - 0.5) * sz * 0.8, sz * (0.6 + rnd() * 0.8)]);
+      }
+      balls.forEach((b) => puff(b[0], b[1] + b[2] * 0.35, b[2], 'rgba(160,172,192,0.45)', 'rgba(160,172,192,0)'));
+      balls.forEach((b) => puff(b[0], b[1], b[2], 'rgba(255,255,255,0.85)', 'rgba(255,255,255,0)'));
+    }
+  });
+}
+
+function lawnCanvas() {
+  return cachedCanvas('lawn', 256, 256, (x) => {
+    x.fillStyle = '#5b7a44';
+    x.fillRect(0, 0, 256, 256);
+    const rnd = seeded(7);
+    for (let i = 0; i < 2600; i++) {
+      const g = 90 + Math.floor(rnd() * 70);
+      x.fillStyle = 'rgba(' + Math.floor(g * 0.55) + ',' + g + ',' + Math.floor(g * 0.4) + ',0.5)';
+      x.fillRect(Math.floor(rnd() * 256), Math.floor(rnd() * 256), 2, 3);
+    }
+  });
+}
+
+// Graustufen für die Deckkraft des Bodens: innen weiß, zum Rand schwarz
+function fadeCanvas() {
+  return cachedCanvas('fade', 256, 256, (x) => {
+    const g = typeof x.createRadialGradient === 'function' ? x.createRadialGradient(128, 128, 0, 128, 128, 128) : null;
+    gradientFill(x, g, [[0, '#ffffff'], [0.55, '#ffffff'], [1, '#000000']], '#ffffff');
+    x.fillRect(0, 0, 256, 256);
+  });
+}
+
+// Pflaster: Weg hell, Einfahrt grau, Steine im Verband
+function pavingCanvas(kind) {
+  return cachedCanvas('pave-' + kind, 128, 128, (x) => {
+    x.fillStyle = kind === 'drive' ? '#6f747a' : '#9a9184';
+    x.fillRect(0, 0, 128, 128);
+    x.fillStyle = kind === 'drive' ? '#8e9399' : '#bdb5a8';
+    for (let row = 0; row < 4; row++) {
+      const off = (row % 2) * 16;
+      for (let col = -1; col < 4; col++) x.fillRect(col * 32 + off + 2, row * 32 + 2, 28, 28);
+    }
+  });
+}
+
+function hedgeCanvas() {
+  return cachedCanvas('hedge', 128, 128, (x) => {
+    x.fillStyle = '#2f5a2a';
+    x.fillRect(0, 0, 128, 128);
+    const rnd = seeded(5);
+    for (let i = 0; i < 900; i++) {
+      const g = 70 + Math.floor(rnd() * 80);
+      x.fillStyle = 'rgba(' + Math.floor(g * 0.45) + ',' + g + ',' + Math.floor(g * 0.35) + ',0.6)';
+      x.beginPath();
+      x.arc(rnd() * 128, rnd() * 128, 1.5 + rnd() * 2.5, 0, Math.PI * 2);
+      x.fill();
+    }
+  });
 }
 
 // Bereinigte Fassung für die Karte. Ungültige Werte werden ersetzt statt abzustürzen.
@@ -480,6 +904,7 @@ function normalizeCardConfig(config) {
     title: typeof c.title === 'string' ? c.title : '',
     opacity: clampNum(c.opacity, 5, 100, 40),
     display: display,
+    style: STYLES.some((x) => x.value === c.style) ? c.style : 'dollhouse',
     // Nur wenn der Benutzer in der Abschnittsansicht eine Zeilenzahl festlegt,
     // gibt Home Assistant eine feste Höhe vor. Dann füllt die Karte diese aus.
     fill: !!(c.grid_options && typeof c.grid_options.rows === 'number'),
@@ -498,6 +923,7 @@ function normalizeCardConfig(config) {
     energy: {
       pv_entity: cleanEntity(en.pv_entity),
       pv_peak: clampNum(en.pv_peak, 0.1, 10000, 10),
+      pv_faces: cleanList(en.pv_faces).filter(isSide),
       heatpump_entity: cleanEntity(en.heatpump_entity),
       heatpump_side: isSide(en.heatpump_side) ? en.heatpump_side : 'right',
       wallbox_entity: cleanEntity(en.wallbox_entity),
@@ -659,6 +1085,57 @@ function makeBadgeTexture(THREE, title, value, colorHex) {
   return { texture: canvasTexture(THREE, cv), aspect: W / H };
 }
 
+// Schild in einer Zeile: Bezeichnung grau, Wert in Farbe, schmaler Rahmen
+function makeTagTexture(THREE, title, value, colorHex) {
+  const cv = document.createElement('canvas');
+  const H = 96, pad = 28, gap = 16;
+  const fTitle = '600 44px sans-serif', fValue = '700 50px sans-serif';
+  let tw = 0, vw = 0;
+  const probe = cv.getContext('2d');
+  if (probe) {
+    probe.font = fTitle;
+    tw = textWidth(probe, title);
+    probe.font = fValue;
+    vw = textWidth(probe, value);
+  }
+  const g = (title && value) ? gap : 0;
+  const W = Math.max(H * 2, Math.ceil(pad * 2 + tw + g + vw));
+  cv.width = W;
+  cv.height = H;
+  const ctx = cv.getContext('2d');
+  if (ctx) {
+    const col = toCss(colorHex);
+    const p = 3, r = H / 2 - p;
+    ctx.clearRect(0, 0, W, H);
+    ctx.beginPath();
+    ctx.moveTo(p + r, p);
+    ctx.lineTo(W - p - r, p);
+    ctx.arc(W - p - r, H / 2, r, -Math.PI / 2, Math.PI / 2);
+    ctx.lineTo(p + r, H - p);
+    ctx.arc(p + r, H / 2, r, Math.PI / 2, Math.PI * 1.5);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(13,15,20,0.8)';
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = col;
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const x0 = (W - (tw + g + vw)) / 2;
+    if (title) {
+      ctx.font = fTitle;
+      ctx.fillStyle = '#c8cfdb';
+      ctx.fillText(title, x0, H / 2 + 2);
+    }
+    if (value) {
+      ctx.font = fValue;
+      ctx.fillStyle = col;
+      ctx.fillText(value, x0 + tw + g, H / 2 + 2);
+    }
+  }
+  return { texture: canvasTexture(THREE, cv), aspect: W / H };
+}
+
 // Ein Modul aus 4 mal 8 Zellen, wird über die Fläche wiederholt
 function makePanelTexture(THREE) {
   const cv = document.createElement('canvas');
@@ -757,6 +1234,8 @@ house-3d-card .h3d-legend { display: flex; flex-direction: column; gap: 4px; fon
 house-3d-card .h3d-li { display: flex; align-items: center; gap: 8px; }
 house-3d-card .h3d-li-note { color: #7c8595; margin-top: 4px; line-height: 1.4; }
 house-3d-card .h3d-sw { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; display: inline-block; }
+house-3d-card .h3d-grad { height: 12px; border-radius: 6px; }
+house-3d-card .h3d-gradl { display: flex; justify-content: space-between; font-size: 11px; color: #9aa3b2; }
 house-3d-card .h3d-fhead { font-size: 10px; color: #5d6675; text-transform: uppercase; letter-spacing: .06em; margin: 6px 0 2px; }
 house-3d-card .h3d-room { padding: 8px; background: #161a21; border: 1px solid #262a33; border-radius: 5px; color: #fff; cursor: pointer; text-align: left; font: inherit; font-size: 12px; width: 100%; }
 house-3d-card .h3d-room.sel { background: #1e2531; }
@@ -823,6 +1302,7 @@ class House3DCard extends HTMLElement {
     this.outdoorVisible = true;
     this.selected = null;
     this.displayMode = 'temp';
+    this.styleName = 'dollhouse';
     this.opacity = 0.4;
     this.stat = null;
     this.histBuckets = [];
@@ -837,10 +1317,11 @@ class House3DCard extends HTMLElement {
     this._auto = false;
     this.explode = 0;           // 0 bis 1, Anteil von EXPLODE_GAP
     this.sunVisible = true;
+    this.gardenVisible = true;
     this.energy = {};           // Leistung in W je Eintrag aus ENERGY_ITEMS
     this.energyVisible = true;
     this.energyGroup = null;
-    this.pvPanel = null;
+    this.pvPanels = [];
     this.flows = [];
     this._energyObjs = {};
   }
@@ -856,6 +1337,7 @@ class House3DCard extends HTMLElement {
     this.config = cfg;
     this.opacity = cfg.opacity / 100;
     this.displayMode = cfg.display;
+    this.styleName = cfg.style;
     this._entityIds = this.collectEntities();
     this._statIds = this.collectStatEntities();
     this.classList.toggle('h3d-fill', cfg.fill);
@@ -889,7 +1371,7 @@ class House3DCard extends HTMLElement {
     const first = !this._hass;
     this._hass = hass;
     if (!this._built) return;
-    if (this._ready3D && this.pvPanel && this.southern() !== this._pvSouth) {
+    if (this._ready3D && this.pvPanels.length && this.southern() !== this._pvSouth) {
       this.rebuildScene();
       this._valueSig = null;
     }
@@ -952,6 +1434,10 @@ class House3DCard extends HTMLElement {
     if (this._raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this._raf);
     this._raf = 0;
     this.stopFlowTimer();
+    if (this._explodeRaf) {
+      this.stopExplodeAnim();
+      this.setExplode(this._explodeTarget);
+    }
     // Beim Verschieben im Dashboard kommt die Karte sofort zurück. Erst wenn sie
     // länger fort ist, wird die 3D-Grafik freigegeben, damit der Browser nicht an
     // seine Grenze für gleichzeitige 3D-Ansichten stößt.
@@ -982,6 +1468,7 @@ class House3DCard extends HTMLElement {
               <button type="button" class="h3d-btn" id="rot-right" title="Nach rechts drehen">&#8631;</button>
               <button type="button" class="h3d-btn" id="pan-mode" aria-pressed="false"
                 title="Ziehen verschiebt das Haus statt es zu drehen. Alternativ: rechte Maustaste, Umschalt und Ziehen oder zwei Finger">&#10021; Verschieben</button>
+              <button type="button" class="h3d-btn" id="explode-btn" aria-pressed="false" title="Etagen auseinander- oder zusammenfahren">&#8661; Etagen</button>
               <button type="button" class="h3d-btn" id="auto-rot" aria-pressed="false" title="Dauerdrehung">Auto</button>
               <button type="button" class="h3d-btn" id="reset-cam" title="Haus mittig ausrichten">Zentrieren</button>
             </div>
@@ -989,6 +1476,7 @@ class House3DCard extends HTMLElement {
               <div class="h3d-dhead"><span>Menü</span>
                 <button type="button" class="h3d-btn" id="menu-close" title="Menü schließen">&#10005;</button>
               </div>
+              <div class="h3d-sec"><div class="h3d-h">Darstellung</div><div class="h3d-modes" id="style-buttons"></div></div>
               <div class="h3d-sec"><div class="h3d-h">Ansicht</div><div class="h3d-col" id="floor-toggles"></div></div>
               <div class="h3d-sec"><div class="h3d-h">Anzeige</div>
                 <div class="h3d-modes" id="mode-buttons"></div>
@@ -1018,6 +1506,7 @@ class House3DCard extends HTMLElement {
     on('rot-right', 'click', () => this.rotateStep(-0.4));
     on('pan-mode', 'click', () => this.setPanMode(!this._panMode));
     on('auto-rot', 'click', () => this.setAuto(!this._auto));
+    on('explode-btn', 'click', () => this.toggleExplode());
     on('reset-cam', 'click', () => this.recenter());
     on('opacity', 'input', (e) => {
       this.opacity = parseInt(e.target.value, 10) / 100;
@@ -1038,7 +1527,11 @@ class House3DCard extends HTMLElement {
     title.style.display = cfg.title ? '' : 'none';
     this.querySelector('#opacity').value = String(Math.round(cfg.opacity));
     this.buildToggles();
+    this.buildStyleButtons();
     this.buildModeButtons();
+    const eb = this.querySelector('#explode-btn');
+    if (eb) eb.style.display = cfg.floors.length > 1 ? '' : 'none';
+    this.paintExplodeBtn(this.explode > 0.5);
     this.buildLegend();
     this.buildRoomsList();
     this.renderHistBar();
@@ -1101,7 +1594,11 @@ class House3DCard extends HTMLElement {
         if (this._autoFit) this.fitView(false);
       }));
     }
-    box.appendChild(this.makeToggle('Sonne und Nordpfeil', this.sunVisible, (on) => {
+    box.appendChild(this.makeToggle('Garten', this.gardenVisible, (on) => {
+      this.gardenVisible = on;
+      this.applyVisibility();
+    }));
+    box.appendChild(this.makeToggle('Sonne, Mond und Nordpfeil', this.sunVisible, (on) => {
       this.sunVisible = on;
       this.applyVisibility();
       if (this._autoFit) this.fitView(false);
@@ -1116,7 +1613,11 @@ class House3DCard extends HTMLElement {
       range.min = '0';
       range.max = '100';
       range.value = String(Math.round(this.explode * 100));
-      range.addEventListener('input', () => this.setExplode(parseInt(range.value, 10) / 100));
+      range.addEventListener('input', () => {
+        this.stopExplodeAnim();
+        this.setExplode(parseInt(range.value, 10) / 100);
+        this.paintExplodeBtn(this.explode > 0.5);
+      });
       wrap.appendChild(range);
       box.appendChild(wrap);
     } else if (this.explode) {
@@ -1127,6 +1628,7 @@ class House3DCard extends HTMLElement {
   // Hebt die Etagen und das Dach an, damit untere Räume frei sichtbar werden
   setExplode(v) {
     this.explode = clamp(v || 0, 0, 1);
+    this.syncExplodeSlider();
     this.applyExplode();
   }
 
@@ -1137,6 +1639,8 @@ class House3DCard extends HTMLElement {
     if (this.roofGroup) this.roofGroup.position.y = this.floorGroups.length * gap;
     this._houseBounds = this.computeBounds(gap);
     this.updateFlowPaths();
+    this.updateFloorTags();
+    this.updateShadowBounds();
     if (this._autoFit) this.fitView(false);
     else this.requestRender();
   }
@@ -1182,6 +1686,15 @@ class House3DCard extends HTMLElement {
 
   buildLegend() {
     const m = this.mode();
+    if (this.styleNow() === 'thermal') {
+      const r = m === 'hum' ? ['30 %', '70 %'] : (m === 'fluct' ? ['0 K', '5 K'] : ['15 °C', '27 °C']);
+      const grad = IR_STOPS.map((st) => toCss(st[1]) + ' ' + Math.round(st[0] * 100) + '%').join(',');
+      this.querySelector('#legend').innerHTML =
+        '<div class="h3d-grad" style="background:linear-gradient(90deg,' + grad + ')"></div>' +
+        '<div class="h3d-gradl"><span>' + r[0] + '</span><span>' + r[1] + '</span></div>' +
+        '<div class="h3d-li-note">Wie eine Wärmebildkamera: dunkel bedeutet niedrig, hell bedeutet hoch. Schraffiert: kein Wert.</div>';
+      return;
+    }
     const scale = m === 'hum' ? HUM_SCALE : (m === 'fluct' ? FLUCT_SCALE : TEMP_SCALE);
     const item = (color, text) =>
       '<div class="h3d-li"><span class="h3d-sw" style="background:' + toCss(color) + '"></span>' + esc(text) + '</div>';
@@ -1333,7 +1846,9 @@ class House3DCard extends HTMLElement {
     const f = this.fmt();
     const m = this.mode();
     const out = [];
-    if (m === 'fluct') {
+    if (TAG_STYLES.indexOf(this.styleNow()) >= 0) {
+      // Werte stehen auf den Schildern über dem Raum
+    } else if (m === 'fluct') {
       const fl = this.flucts[key];
       if (fl) out.push('Spanne ' + f.kelvin(fl.range) + ' K');
     } else {
@@ -1406,6 +1921,7 @@ class House3DCard extends HTMLElement {
       });
       this.updateOutdoorMesh();
       this.updateEnergy();
+      this.updateStyle();
       this.applyOpacity();
     }
     this.paintRoomButtons(false);
@@ -1866,8 +2382,28 @@ class House3DCard extends HTMLElement {
     if (!THREE || !container) return;
 
     this._scene = new THREE.Scene();
-    this._scene.background = new THREE.Color(0x12141a);
-    this._scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+    // Kuppel um die Kamera, Verlauf nach Blickrichtung: oben Himmel, unten Dunst
+    const cloudTex = canvasTexture(THREE, cloudCanvas());
+    cloudTex.wrapS = THREE.RepeatWrapping;
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(400, 32, 16), new THREE.ShaderMaterial({
+      uniforms: {
+        top: { value: new THREE.Color() }, hor: { value: new THREE.Color() }, low: { value: new THREE.Color() },
+        clouds: { value: cloudTex }, cloudCol: { value: new THREE.Color() }, cloudAmt: { value: 0 }, cloudShift: { value: 0 }
+      },
+      vertexShader: SKY_VS,
+      fragmentShader: SKY_FS,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false
+    }));
+    sky.renderOrder = -10;
+    sky.frustumCulled = false;
+    this._scene.add(sky);
+    this._sky = sky;
+    this._skyKey = null;
+    this.buildStars();
+    this._ambient = new THREE.AmbientLight(0xffffff, 1.0);
+    this._scene.add(this._ambient);
     const d1 = new THREE.DirectionalLight(0xffffff, 1.3);
     d1.position.set(20, 30, 16);
     this._scene.add(d1);
@@ -1907,10 +2443,10 @@ class House3DCard extends HTMLElement {
     this.stopPlay();
     this.stopFlowTimer();
     this.disposeHouse();
-    if (this._grid) {
-      this.disposeObject(this._grid);
-      this._grid = null;
-    }
+    [this._ground, this._sky, this._stars].forEach((o) => { if (o) this.disposeObject(o); });
+    this._ground = null;
+    this._sky = null;
+    this._stars = null;
     try {
       this._renderer.dispose();
       if (typeof this._renderer.forceContextLoss === 'function') this._renderer.forceContextLoss();
@@ -1932,6 +2468,8 @@ class House3DCard extends HTMLElement {
       const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
       mats.forEach((m) => {
         if (m.map) m.map.dispose();
+        if (m.alphaMap) m.alphaMap.dispose();
+        if (m.uniforms && m.uniforms.clouds && m.uniforms.clouds.value) m.uniforms.clouds.value.dispose();
         m.dispose();
       });
     });
@@ -1939,9 +2477,23 @@ class House3DCard extends HTMLElement {
   }
 
   disposeHouse() {
-    [...this.floorGroups, this.roofGroup, this.outdoorMesh, this.compassGroup, this.sunMesh, this.energyGroup].forEach((g) => { if (g) this.disposeObject(g); });
+    [...this.floorGroups, this.roofGroup, this.outdoorMesh, this.compassGroup, this.sunMesh, this.energyGroup,
+      this.moonMesh, this._envGroup].forEach((g) => { if (g) this.disposeObject(g); });
+    this.moonMesh = null;
+    this._envGroup = null;
+    this._gardenGroup = null;
+    this._envMats = [];
+    this._spillMat = null;
+    this._poolMat = null;
+    this.trees = [];
+    if (this._styleScene) this.disposeObject(this._styleScene);
+    this._styleScene = null;
+    this._styleRooms = {};
+    this._heat = [];
+    this._scan = null;
+    this.floorTags = [];
     this.energyGroup = null;
-    this.pvPanel = null;
+    this.pvPanels = [];
     this.flows = [];
     this._energyObjs = {};
     this.compassGroup = null;
@@ -2089,7 +2641,10 @@ class House3DCard extends HTMLElement {
     this._houseBounds = this.computeBounds(this.explode * EXPLODE_GAP);
 
     // PV-Module, Wärmepumpe, Wallbox und Leitungen
-    const deviceFront = this.buildEnergy(roofMesh, rw, rd, hb);
+    const deviceFront = this.buildEnergy(roofMesh, rw, rd);
+    const env = this.planEnvironment();
+    const ext = Math.max(hb.maxX - hb.minX, hb.maxZ - hb.minZ);
+    const cr = clamp(ext * 0.1, 1.0, 2.4);
 
     // Außentemperatur als Tafel vor dem Haus
     if (cfg.outdoor.temp_entity) {
@@ -2103,7 +2658,14 @@ class House3DCard extends HTMLElement {
         side: THREE.DoubleSide
       }));
       plate.rotation.x = -Math.PI / 2;
-      plate.position.set((hb.minX + hb.maxX) / 2, 0.04, Math.max(hb.maxZ, deviceFront) + 0.8 + ph / 2);
+      // Die Tafel weicht Weg, Einfahrt und Nordpfeil vor dem Haus aus
+      const blocks = [[hb.minX - 2 * cr - 0.6, hb.minX - 0.6]];
+      [env.entry, env.drive].forEach((e) => { if (e && e.side === 'bottom') blocks.push([e.x - e.w / 2 - 0.3, e.x + e.w / 2 + 0.3]); });
+      const free = (cx) => blocks.every((bl) => cx + pw / 2 <= bl[0] || cx - pw / 2 >= bl[1]);
+      const cands = [(hb.minX + hb.maxX) / 2];
+      blocks.slice(1).forEach((bl) => cands.push(bl[0] - pw / 2, bl[1] + pw / 2));
+      const px = cands.find(free);
+      plate.position.set(px === undefined ? cands[0] : px, 0.04, Math.max(hb.maxZ, deviceFront) + 0.8 + ph / 2);
       plate.renderOrder = 6;
       plate.userData = { text: '', w: pw, h: ph };
       this._scene.add(plate);
@@ -2111,8 +2673,6 @@ class House3DCard extends HTMLElement {
     }
 
     // Nordpfeil am Boden vorne links, dreht sich mit dem Haus
-    const ext = Math.max(hb.maxX - hb.minX, hb.maxZ - hb.minZ);
-    const cr = clamp(ext * 0.1, 1.0, 2.4);
     const compassPlane = new THREE.Mesh(new THREE.PlaneGeometry(cr * 2, cr * 2), new THREE.MeshBasicMaterial({
       map: makeCompassTexture(THREE),
       transparent: true,
@@ -2137,7 +2697,23 @@ class House3DCard extends HTMLElement {
     this.sunMesh = sun;
     this._sunT = 0;
 
-    this.rebuildGrid();
+    // Mond als Scheibe mit Phase, etwas größer als die Sonne
+    const moonCanvas = document.createElement('canvas');
+    moonCanvas.width = 128;
+    moonCanvas.height = 128;
+    const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(THREE, moonCanvas), transparent: true, depthWrite: false }));
+    const ms = clamp(ext * 0.035, 0.35, 1.2) * 2.6;
+    moon.scale.set(ms, ms, 1);
+    moon.visible = false;
+    moon.userData = { canvas: moonCanvas, key: '' };
+    this._scene.add(moon);
+    this.moonMesh = moon;
+
+    this._envBounds = this.envBounds(hb);
+    this.rebuildGround();
+    this.buildStyle();
+    this.buildEnvironment(env, hb);
+    this.paintGarden();
     this.floorGroups.forEach((g, i) => { g.position.y = i * this.explode * EXPLODE_GAP; });
     this.roofGroup.position.y = this.floorGroups.length * this.explode * EXPLODE_GAP;
     this.updateFlowPaths();
@@ -2145,16 +2721,59 @@ class House3DCard extends HTMLElement {
     this.applyOpacity();
   }
 
-  rebuildGrid() {
+  // Ruhige Bodenfläche mit weichem Rand, Größe nach dem Haus
+  rebuildGround() {
     const THREE = this.THREE;
     const hb = this._houseBounds;
+    const eb = this._envBounds || hb;
     const ext = Math.max(Math.abs(hb.minX), Math.abs(hb.maxX), Math.abs(hb.minZ), Math.abs(hb.maxZ) + 4);
-    const size = Math.max(30, 2 * Math.ceil(ext + 6));
-    if (this._grid && this._gridSize === size) return;
-    if (this._grid) this.disposeObject(this._grid);
-    this._grid = new THREE.GridHelper(size, size, 0x2a303c, 0x1c212a);
-    this._gridSize = size;
-    this._scene.add(this._grid);
+    const env = Math.max(Math.abs(eb.minX), Math.abs(eb.maxX), Math.abs(eb.minZ), Math.abs(eb.maxZ));
+    // Das Grundstück liegt im deckenden Teil, erst dahinter läuft der Boden aus
+    const radius = Math.max(18, Math.ceil(ext * 1.8 + 6), Math.ceil(env * Math.SQRT2 / 0.55 + 2));
+    if (this._ground && this._groundR === radius) {
+      this.paintGround();
+      return;
+    }
+    if (this._ground) this.disposeObject(this._ground);
+    const fade = canvasTexture(THREE, fadeCanvas());
+    fade.colorSpace = THREE.NoColorSpace;
+    const lawn = canvasTexture(THREE, lawnCanvas());
+    lawn.wrapS = THREE.RepeatWrapping;
+    lawn.wrapT = THREE.RepeatWrapping;
+    lawn.repeat.set(radius / 2.5, radius / 2.5);
+    this._lawnTex = lawn;
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(radius, 72), new THREE.MeshBasicMaterial({
+      color: (this._skyNow || SKY_NONE).ground,
+      alphaMap: fade,
+      transparent: true,
+      depthWrite: false
+    }));
+    disc.rotation.x = -Math.PI / 2;
+    disc.position.y = -0.02;
+    disc.renderOrder = -1;
+    this._scene.add(disc);
+    this._ground = disc;
+    this._groundR = radius;
+    this.paintGround();
+  }
+
+  // Farben von Himmel und Boden für eine Sonnenhöhe, ohne Wert neutral dunkel
+  paintSky(el) {
+    const sky = skyAt(el);
+    const key = sky.top + ':' + sky.hor + ':' + sky.ground + ':' + sky.cloud + ':' + sky.ca.toFixed(2);
+    if (this._skyKey === key) return;
+    this._skyKey = key;
+    this._skyNow = sky;
+    if (this._sky) {
+      const u = this._sky.material.uniforms;
+      u.top.value.setHex(sky.top);
+      u.hor.value.setHex(sky.hor);
+      u.low.value.setHex(mixColor(sky.ground, sky.hor, 0.6));
+      u.cloudCol.value.setHex(sky.cloud);
+      u.cloudAmt.value = sky.ca;
+    }
+    this.paintGround();
+    this.requestRender();
   }
 
   labelSize(aspect, roomW, roomD) {
@@ -2222,6 +2841,948 @@ class House3DCard extends HTMLElement {
     plate.userData.text = key;
   }
 
+  /* ---------- 3D: Umgebung, Garten und Tageszeit ---------- */
+
+  // Hauseingang und Zufahrt aus dem Grundriss des Erdgeschosses. Der Weg führt
+  // zum Flur, bevorzugt an der unteren Seite des Grundrisses. Die Einfahrt führt
+  // an die kurze Seite des Carports, sonst der Garage.
+  planEnvironment() {
+    const cfg = this.config;
+    const W = cfg.house.width, D = cfg.house.depth;
+    const f0 = cfg.floors[0];
+    const rooms = (f0 ? f0.rooms : []).map((r) => ({
+      r: r, x0: r.x - W / 2, z0: r.z - D / 2, x1: r.x - W / 2 + r.w, z1: r.z - D / 2 + r.d
+    }));
+    const inside = (x, z) => rooms.some((o) => x > o.x0 + 1e-6 && x < o.x1 - 1e-6 && z > o.z0 + 1e-6 && z < o.z1 - 1e-6);
+    const typeOf = (o) => {
+      const t = findRoomType(o.r.type);
+      return t ? t.value : '';
+    };
+    const outer = (o) => [
+      { side: 'bottom', x: (o.x0 + o.x1) / 2, z: o.z1, len: o.x1 - o.x0, nx: 0, nz: 1 },
+      { side: 'right', x: o.x1, z: (o.z0 + o.z1) / 2, len: o.z1 - o.z0, nx: 1, nz: 0 },
+      { side: 'left', x: o.x0, z: (o.z0 + o.z1) / 2, len: o.z1 - o.z0, nx: -1, nz: 0 },
+      { side: 'top', x: (o.x0 + o.x1) / 2, z: o.z0, len: o.x1 - o.x0, nx: 0, nz: -1 }
+    ].filter((e) => !inside(e.x + e.nx * 0.15, e.z + e.nz * 0.15));
+    // Wärmepumpe und Wallbox stehen schon, der Weg weicht ihnen aus
+    const devs = ['hp', 'wb'].map((k) => this._energyObjs && this._energyObjs[k]).filter(Boolean)
+      .map((o) => ({ x: o.device.position.x, z: o.device.position.z, r: o.device.userData.r || 0.5 }));
+    const blocked = (e) => devs.some((d) => {
+      const across = e.side === 'top' || e.side === 'bottom';
+      const along = across ? d.x - e.x : d.z - e.z;
+      const out = across ? (d.z - e.z) * e.nz : (d.x - e.x) * e.nx;
+      return out > -0.05 && Math.abs(along) < e.w / 2 + d.r + 0.2;
+    });
+    // Sucht von der Mitte aus die nächste freie Stelle, sonst bleibt die Mitte
+    const shift = (e, lo, hi, at) => {
+      if (!blocked(e)) return e;
+      for (let s = 0.1; s <= hi - lo + 0.05; s += 0.1) {
+        for (const c of [e.x0 - s, e.x0 + s]) {
+          if (c < lo - 1e-6 || c > hi + 1e-6) continue;
+          const n = at(c);
+          if (n && !blocked(n)) return n;
+        }
+      }
+      return e;
+    };
+    let entry;
+    const hall = rooms.find((o) => typeOf(o) === 'hall' && outer(o).length);
+    if (hall) {
+      const e = outer(hall)[0];
+      const w = Math.min(1.3, e.len);
+      const across = e.side === 'top' || e.side === 'bottom';
+      const mid = across ? e.x : e.z;
+      const at = (c) => {
+        const n = Object.assign({ w: w, x0: mid }, e, across ? { x: c } : { z: c });
+        // Der ganze Weg muss an einer Außenkante liegen
+        const ok = [-w / 2 + 0.05, 0, w / 2 - 0.05].every((o) => !inside(
+          (across ? c + o : n.x) + e.nx * 0.15, (across ? n.z : c + o) + e.nz * 0.15));
+        return ok ? n : null;
+      };
+      entry = shift(at(mid) || Object.assign({ w: w, x0: mid }, e), mid - e.len / 2 + w / 2, mid + e.len / 2 - w / 2, at);
+    } else {
+      const at = (c) => {
+        let z = D / 2;
+        rooms.forEach((o) => { if (o.x0 < c + 0.65 && o.x1 > c - 0.65) z = Math.max(z, o.z1); });
+        return { side: 'bottom', x: c, z: z, len: 1.3, w: 1.3, nx: 0, nz: 1, x0: 0 };
+      };
+      entry = shift(at(0), -W / 2 + 0.65, W / 2 - 0.65, at);
+    }
+    delete entry.x0;
+    let drive = null;
+    const car = rooms.find((o) => typeOf(o) === 'carport') || rooms.find((o) => typeOf(o) === 'garage');
+    if (car) {
+      const es = outer(car);
+      const longZ = (car.z1 - car.z0) >= (car.x1 - car.x0);
+      const pref = longZ ? ['bottom', 'top'] : ((car.x0 + car.x1) / 2 >= 0 ? ['right', 'left'] : ['left', 'right']);
+      const e = es.find((x) => x.side === pref[0]) || es.find((x) => x.side === pref[1]) || es[0];
+      if (e) drive = Object.assign({ w: e.len }, e);
+    }
+    const lit = [];
+    rooms.forEach((o) => {
+      if (['garage', 'carport', 'storage'].indexOf(typeOf(o)) >= 0) return;
+      outer(o).forEach((e) => { if (e.len >= 1.2) lit.push(e); });
+    });
+    return { entry: entry, drive: drive, lit: lit };
+  }
+
+  // Streifen vom Haus bis über die Hecke hinaus
+  stripRect(e, b) {
+    const h = e.w / 2;
+    if (e.side === 'bottom') return { x0: e.x - h, x1: e.x + h, z0: e.z, z1: b.maxZ + 0.6 };
+    if (e.side === 'top') return { x0: e.x - h, x1: e.x + h, z0: b.minZ - 0.6, z1: e.z };
+    if (e.side === 'right') return { x0: e.x, x1: b.maxX + 0.6, z0: e.z - h, z1: e.z + h };
+    return { x0: b.minX - 0.6, x1: e.x, z0: e.z - h, z1: e.z + h };
+  }
+
+  // Grundstück um Haus, Geräte, Tafel und Nordpfeil mit Platz für Bäume
+  envBounds(hb) {
+    const b = { minX: hb.minX, maxX: hb.maxX, minZ: hb.minZ, maxZ: hb.maxZ };
+    const grow = (x, z, rx, rz) => {
+      b.minX = Math.min(b.minX, x - rx);
+      b.maxX = Math.max(b.maxX, x + rx);
+      b.minZ = Math.min(b.minZ, z - rz);
+      b.maxZ = Math.max(b.maxZ, z + rz);
+    };
+    ['hp', 'wb'].forEach((k) => {
+      const o = this._energyObjs && this._energyObjs[k];
+      if (o) grow(o.device.position.x, o.device.position.z, o.device.userData.r, o.device.userData.r);
+    });
+    if (this.outdoorMesh) grow(this.outdoorMesh.position.x, this.outdoorMesh.position.z, this.outdoorMesh.userData.w / 2, this.outdoorMesh.userData.h / 2);
+    if (this.compassGroup) grow(this.compassGroup.position.x, this.compassGroup.position.z, this.compassGroup.userData.r, this.compassGroup.userData.r);
+    b.minX -= 5;
+    b.maxX += 5;
+    b.minZ -= 5;
+    b.maxZ += 5;
+    return b;
+  }
+
+  // Weg, Einfahrt, Hecke, Bäume und das Licht, das nachts aus dem Haus fällt
+  buildEnvironment(env, hb) {
+    const THREE = this.THREE;
+    const b = this._envBounds;
+    const group = new THREE.Group();
+    this._scene.add(group);
+    this._envGroup = group;
+    const garden = new THREE.Group();
+    group.add(garden);
+    this._gardenGroup = garden;
+    const mats = this._envMats = [];
+    const mat = (opts, base) => {
+      const m = new THREE.MeshStandardMaterial(opts);
+      m.userData.base = base;
+      mats.push(m);
+      return m;
+    };
+    const strips = [];
+    const strip = (e, kind) => {
+      const r = this.stripRect(e, b);
+      const tex = canvasTexture(THREE, pavingCanvas(kind));
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(Math.max(1, (r.x1 - r.x0) / 1.0), Math.max(1, (r.z1 - r.z0) / 1.0));
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(r.x1 - r.x0, r.z1 - r.z0), mat({ map: tex, roughness: 0.95 }, 0xffffff));
+      m.rotation.x = -Math.PI / 2;
+      m.position.set((r.x0 + r.x1) / 2, kind === 'drive' ? 0.006 : 0.008, (r.z0 + r.z1) / 2);
+      m.receiveShadow = true;
+      m.userData.kind = kind;
+      garden.add(m);
+      strips.push({ r: r, side: e.side });
+    };
+    if (env.entry) strip(env.entry, 'path');
+    if (env.drive) strip(env.drive, 'drive');
+    this._envStrips = strips;
+
+    // Hecke rund um das Grundstück, mit Lücken für Weg und Einfahrt
+    const hedgeMat = mat({ map: null, roughness: 1 }, 0xffffff);
+    const ht = 0.55;
+    const side = (sideName, a0, a1, fixed, horizontal) => {
+      let segs = [[a0, a1]];
+      strips.filter((s) => s.side === sideName).forEach((s) => {
+        const g0 = (horizontal ? s.r.x0 : s.r.z0) - 0.25, g1 = (horizontal ? s.r.x1 : s.r.z1) + 0.25;
+        segs = segs.reduce((acc, seg) => {
+          if (g1 <= seg[0] || g0 >= seg[1]) acc.push(seg);
+          else {
+            if (g0 - seg[0] > 0.3) acc.push([seg[0], g0]);
+            if (seg[1] - g1 > 0.3) acc.push([g1, seg[1]]);
+          }
+          return acc;
+        }, []);
+      });
+      segs.forEach((seg) => {
+        const len = seg[1] - seg[0];
+        const tex = canvasTexture(THREE, hedgeCanvas());
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(Math.max(1, len / 1.5), 1);
+        const m = hedgeMat.clone();
+        m.map = tex;
+        m.userData.base = 0xffffff;
+        mats.push(m);
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(horizontal ? len : ht, 0.85, horizontal ? ht : len), m);
+        mesh.position.set(horizontal ? (seg[0] + seg[1]) / 2 : fixed, 0.425, horizontal ? fixed : (seg[0] + seg[1]) / 2);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.userData.hedge = sideName;
+        garden.add(mesh);
+      });
+    };
+    side('top', b.minX - ht / 2, b.maxX + ht / 2, b.minZ, true);
+    side('bottom', b.minX - ht / 2, b.maxX + ht / 2, b.maxZ, true);
+    side('left', b.minZ + ht / 2, b.maxZ - ht / 2, b.minX, false);
+    side('right', b.minZ + ht / 2, b.maxZ - ht / 2, b.maxX, false);
+
+    // Bäume in den Ecken und an den Seiten, wo Platz ist
+    const busy = [{ x0: hb.minX - 0.8, x1: hb.maxX + 0.8, z0: hb.minZ - 0.8, z1: hb.maxZ + 0.8 }];
+    strips.forEach((s) => busy.push({ x0: s.r.x0 - 0.8, x1: s.r.x1 + 0.8, z0: s.r.z0 - 0.8, z1: s.r.z1 + 0.8 }));
+    const addBusy = (x, z, r) => busy.push({ x0: x - r, x1: x + r, z0: z - r, z1: z + r });
+    ['hp', 'wb'].forEach((k) => {
+      const o = this._energyObjs && this._energyObjs[k];
+      if (o) addBusy(o.device.position.x, o.device.position.z, o.device.userData.r + 0.6);
+    });
+    if (this.outdoorMesh) {
+      const p = this.outdoorMesh;
+      busy.push({ x0: p.position.x - p.userData.w / 2 - 0.5, x1: p.position.x + p.userData.w / 2 + 0.5,
+        z0: p.position.z - p.userData.h / 2 - 0.5, z1: p.position.z + p.userData.h / 2 + 0.5 });
+    }
+    if (this.compassGroup) addBusy(this.compassGroup.position.x, this.compassGroup.position.z, this.compassGroup.userData.r + 0.5);
+    const trunk = mat({ color: 0x6b4a2f, roughness: 0.9 }, 0x6b4a2f);
+    const leaves = [0x4f8a3c, 0x5f9c48, 0x3f7432].map((c) => mat({ color: c, roughness: 0.9, flatShading: true }, c));
+    const mx = (b.minX + b.maxX) / 2, mz = (b.minZ + b.maxZ) / 2;
+    // Die vordere rechte Ecke bleibt frei, von dort blickt die Standardansicht auf das Haus
+    const cands = [[b.minX + 2.2, b.minZ + 2.2], [b.maxX - 2.2, b.minZ + 2.2], [b.minX + 2.2, b.maxZ - 2.2],
+      [b.minX + 2.2, mz], [mx, b.minZ + 2.2], [b.maxX - 2.2, mz]];
+    const rnd = seeded(Math.round(this.config.house.width * 31 + this.config.house.depth * 17));
+    this.trees = [];
+    cands.forEach((c) => {
+      if (this.trees.length >= 5) return;
+      const crown = 1.0 + rnd() * 0.5;
+      const trunkH = 1.2 + rnd() * 0.5;
+      if (busy.some((o) => c[0] > o.x0 - crown && c[0] < o.x1 + crown && c[1] > o.z0 - crown && c[1] < o.z1 + crown)) return;
+      const tree = new THREE.Group();
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, trunkH, 8), trunk);
+      t.position.y = trunkH / 2;
+      t.castShadow = true;
+      tree.add(t);
+      for (let k = 0; k < 3; k++) {
+        const s = new THREE.Mesh(new THREE.IcosahedronGeometry(crown * (0.7 + rnd() * 0.3), 1), leaves[k]);
+        s.position.set((rnd() - 0.5) * crown * 0.8, trunkH + crown * 0.6 + rnd() * crown * 0.4, (rnd() - 0.5) * crown * 0.8);
+        s.castShadow = true;
+        tree.add(s);
+      }
+      tree.position.set(c[0], 0, c[1]);
+      tree.userData.crown = crown;
+      garden.add(tree);
+      this.trees.push(tree);
+    });
+
+    // Nachts fällt warmes Licht aus dem Erdgeschoss auf den Boden
+    const spillMat = new THREE.MeshBasicMaterial({ map: this._styleTex ? this._styleTex.rise : canvasTexture(THREE, riseCanvas()),
+      color: 0xffc078, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    spillMat.visible = false;
+    this._spillMat = spillMat;
+    env.lit.forEach((e) => {
+      const holder = new THREE.Group();
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(e.len * 0.8, 2.4), spillMat);
+      p.rotation.x = -Math.PI / 2;
+      p.renderOrder = 1;
+      holder.add(p);
+      holder.rotation.y = Math.atan2(-e.nx, -e.nz);
+      holder.position.set(e.x + e.nx * 1.35, 0.014, e.z + e.nz * 1.35);
+      group.add(holder);
+    });
+  }
+
+  // Rasen nur mit Garten, sonst die ruhige Fläche in der Farbe des Himmels
+  paintGround() {
+    const g = this._ground;
+    if (!g) return;
+    const m = g.material;
+    const want = this.gardenVisible ? this._lawnTex : null;
+    if (m.map !== want) {
+      m.map = want;
+      m.needsUpdate = true;
+    }
+    m.color.setHex(this.gardenVisible ? grayHex(this.envBright()) : (this._skyNow || SKY_NONE).ground);
+  }
+
+  // Helligkeit von Rasen, Weg und Bäumen: am Tag voll, nachts gedämpft,
+  // im Wärmebild und im Hologramm dunkler, damit die Werte leuchten
+  envBright() {
+    const base = typeof this._envLight === 'number' ? this._envLight : 0.6;
+    const st = this.styleNow();
+    return base * ((st === 'thermal' || st === 'hologram') ? 0.45 : 1);
+  }
+
+  paintGarden() {
+    const f = this.envBright();
+    (this._envMats || []).forEach((m) => m.color.setHex(mixColor(0x000000, m.userData.base, f)));
+    this.paintGround();
+  }
+
+  // Sterne auf einer Kugel um die Kamera, zum Horizont hin schwächer
+  buildStars() {
+    const THREE = this.THREE;
+    const group = new THREE.Group();
+    const rnd = seeded(3);
+    const make = (n, size, minB) => {
+      const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const y = -0.12 + rnd() * 1.12;
+        const a = rnd() * Math.PI * 2;
+        const r = Math.sqrt(Math.max(0, 1 - y * y));
+        pos[i * 3] = Math.cos(a) * r * 380;
+        pos[i * 3 + 1] = y * 380;
+        pos[i * 3 + 2] = Math.sin(a) * r * 380;
+        const v = clamp((y + 0.12) / 0.25, 0, 1) * (minB + rnd() * (1 - minB));
+        col[i * 3] = v * 0.92;
+        col[i * 3 + 1] = v * 0.95;
+        col[i * 3 + 2] = v;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: size, sizeAttenuation: false, vertexColors: true,
+        transparent: true, opacity: 0, depthWrite: false }));
+      pts.renderOrder = -9;
+      pts.frustumCulled = false;
+      group.add(pts);
+    };
+    make(700, 1.5, 0.35);
+    make(90, 2.6, 0.7);
+    group.visible = false;
+    this._scene.add(group);
+    this._stars = group;
+  }
+
+  moonAt(ms) {
+    const c = this._hass && this._hass.config;
+    if (!c || typeof c.latitude !== 'number' || typeof c.longitude !== 'number') return null;
+    return Object.assign(moonPosition(ms, c.latitude, c.longitude), moonIllumination(ms));
+  }
+
+  // Mond mit Phase an seiner Stelle am Himmel, gleich weit entfernt wie die Sonne
+  updateMoon(t, R, cx, cy, cz) {
+    const m = this.moonMesh;
+    if (!m) return null;
+    const mp = this.moonAt(t);
+    const show = !!mp && this.sunVisible && mp.elevation > -1;
+    m.visible = show;
+    if (!mp) return null;
+    const dir = compassToScene(mp.azimuth, mp.elevation, this.config.orientation.north);
+    m.position.set(cx + dir.x * R, cy + dir.y * R, cz + dir.z * R);
+    const south = this.southern();
+    const key = mp.fraction.toFixed(2) + (mp.waxing ? '+' : '-') + (south ? 's' : 'n');
+    if (m.userData.key !== key) {
+      m.userData.key = key;
+      const cv = m.userData.canvas;
+      const ctx = cv.getContext('2d');
+      if (ctx) drawMoon(ctx, cv.width, mp.fraction, mp.waxing, south);
+      m.material.map.needsUpdate = true;
+    }
+    return mp;
+  }
+
+  // Alles, was von der Tageszeit abhängt, außer Sonne und Himmelsfarben
+  applyTimeOfDay(el, t) {
+    const known = typeof el === 'number';
+    const night = known ? clamp((2 - el) / 8, 0, 1) : 0;
+    this._night = night;
+    const stars = known ? clamp((-3 - el) / 8, 0, 1) : 0;
+    if (this._stars) {
+      this._stars.visible = stars > 0.01;
+      this._stars.children.forEach((p) => { p.material.opacity = stars; });
+    }
+    if (this._sky) this._sky.material.uniforms.cloudShift.value = ((t / 3600000) * 0.02) % 1;
+    if (this._poolMat) {
+      this._poolMat.opacity = 0.32 * night;
+      this._poolMat.visible = night > 0.01;
+    }
+    if (this._spillMat) {
+      this._spillMat.opacity = 0.5 * night;
+      this._spillMat.visible = night > 0.01;
+    }
+    if (this._styleMats) {
+      this._styleMats.wall.emissive.setHex(mixColor(0x000000, 0xffa35c, 0.22 * night));
+      this._styleMats.plate.emissive.setHex(mixColor(0x000000, 0xffa35c, 0.12 * night));
+    }
+    this._envLight = known ? clamp((el + 10) / 22, 0.22, 1) : 0.6;
+    this.paintGarden();
+  }
+
+  /* ---------- 3D: Darstellungen ---------- */
+
+  styleNow() {
+    return STYLES.some((x) => x.value === this.styleName) ? this.styleName : 'dollhouse';
+  }
+
+  setStyle(s) {
+    if (!STYLES.some((x) => x.value === s) || s === this.styleNow()) return;
+    this.styleName = s;
+    this.buildStyleButtons();
+    this.buildLegend();
+    if (this._ready3D) this.rebuildScene();
+    this.refreshView();
+  }
+
+  buildStyleButtons() {
+    const box = this.querySelector('#style-buttons');
+    if (!box) return;
+    box.innerHTML = '';
+    STYLES.forEach((s) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.style = s.value;
+      b.textContent = s.label;
+      if (s.value === this.styleNow()) b.classList.add('active');
+      b.addEventListener('click', () => this.setStyle(s.value));
+      box.appendChild(b);
+    });
+  }
+
+  // Wert eines Raumes als Anteil von 0 bis 1 für Säulenhöhe und Wärmebild,
+  // null ohne Wert. Die Bereiche stehen auch in der Legende des Wärmebilds.
+  normValue(fi, ri) {
+    const key = this.tempKey(fi, ri);
+    const m = this.mode();
+    if (m === 'fluct') {
+      const fl = this.flucts[key];
+      return fl ? clamp(fl.range / 5, 0, 1) : null;
+    }
+    const t = this.temps[key], h = this.hums[key];
+    if (m === 'hum') return hasValue(h) ? clamp((parseFloat(h) - 30) / 40, 0, 1) : null;
+    if (hasValue(t)) return clamp((parseFloat(t) - 15) / 12, 0, 1);
+    if (m === 'both' && hasValue(h)) return clamp((parseFloat(h) - 30) / 40, 0, 1);
+    return null;
+  }
+
+  // Kurzer Wert für die Schilder über den Räumen
+  shortValue(fi, ri) {
+    const key = this.tempKey(fi, ri);
+    const f = this.fmt();
+    const m = this.mode();
+    if (m === 'fluct') {
+      const fl = this.flucts[key];
+      return fl ? f.kelvin(fl.range) + ' K' : '';
+    }
+    const t = this.temps[key], h = this.hums[key];
+    const parts = [];
+    if (m !== 'hum' && hasValue(t)) parts.push(f.temp(t) + '°');
+    if ((m === 'hum' || m === 'both') && hasValue(h)) parts.push(f.hum(h) + ' %');
+    return parts.join(' · ');
+  }
+
+  // Baut die Teile der gewählten Darstellung in die Etagengruppen. Die
+  // unsichtbaren Raumkästen bleiben für Antippen, Auswahl und offene Fenster.
+  buildStyle() {
+    const THREE = this.THREE;
+    const st = this.styleNow();
+    const cfg = this.config;
+    const W = cfg.house.width, D = cfg.house.depth;
+    const classic = st === 'classic';
+    this._styleRooms = {};
+    this._heat = [];
+    this._scan = null;
+    this.roomMeshes.forEach((m) => { m.material.visible = classic; });
+    this.slabMeshes.forEach((s) => { s.visible = classic; });
+    const scene = new THREE.Group();
+    this._scene.add(scene);
+    this._styleScene = scene;
+    this._styleMats = {
+      wall: new THREE.MeshStandardMaterial({ color: 0xf4f2ed, roughness: 0.95 }),
+      cap: new THREE.MeshStandardMaterial({ color: 0x34373e, roughness: 0.8 }),
+      side: new THREE.MeshStandardMaterial({ color: 0xe9e6df, roughness: 0.9 }),
+      under: new THREE.MeshStandardMaterial({ color: 0xd9d5cc, roughness: 0.9 }),
+      dark: new THREE.MeshStandardMaterial({ color: 0x0b0d12, roughness: 0.9 }),
+      darkWall: new THREE.MeshStandardMaterial({ color: 0x08090c, roughness: 0.7 }),
+      plate: new THREE.MeshStandardMaterial({ color: 0xf5f6f8, roughness: 0.6 })
+    };
+    this._styleTex = {
+      radial: canvasTexture(THREE, radialCanvas()),
+      rise: canvasTexture(THREE, riseCanvas())
+    };
+    let baseY = 0;
+    cfg.floors.forEach((floor, fi) => {
+      const rooms = floor.rooms.map((r, ri) => {
+        const x0 = r.x - W / 2, z0 = r.z - D / 2;
+        return { room: r, fi: fi, ri: ri, x0: x0, z0: z0, x1: x0 + r.w, z1: z0 + r.d, w: r.w, d: r.d,
+          cx: x0 + r.w / 2, cz: z0 + r.d / 2, open: roomTypeIsOpen(r.type), key: this.tempKey(fi, ri) };
+      });
+      const part = new THREE.Group();
+      this.floorGroups[fi].add(part);
+      if (st === 'dollhouse') this.buildDollhouse(part, rooms, baseY, floor.height);
+      else if (st === 'thermal') this.buildThermal(part, rooms, baseY, floor.height, fi);
+      else if (st === 'hologram') this.buildHologram(part, rooms, baseY, floor.height);
+      else if (st === 'columns') this.buildColumns(part, rooms, baseY, floor.height);
+      baseY += floor.height;
+    });
+    if (st === 'columns') {
+      // Die Säule steht in der Mitte, der Name rückt nach vorn
+      this.labels.forEach((l) => {
+        const room = cfg.floors[l.userData.fi].rooms[l.userData.ri];
+        l.position.z += Math.min(room.d * 0.3, 1);
+      });
+    }
+    if (st === 'hologram') this.buildScan(scene, baseY);
+    // Nachts warmes Licht auf den Böden, nicht im Wärmebild und Hologramm
+    this._poolMat = null;
+    if (['dollhouse', 'columns', 'classic'].indexOf(st) >= 0) {
+      const pool = new THREE.MeshBasicMaterial({ map: this._styleTex.radial, color: 0xffb766, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false });
+      pool.visible = false;
+      this._poolMat = pool;
+      let y = 0;
+      cfg.floors.forEach((floor, fi) => {
+        floor.rooms.forEach((r) => {
+          const t = findRoomType(r.type);
+          if (t && ['garage', 'carport', 'storage'].indexOf(t.value) >= 0) return;
+          const m = new THREE.Mesh(new THREE.PlaneGeometry(r.w * 0.9, r.d * 0.9), pool);
+          m.rotation.x = -Math.PI / 2;
+          m.position.set(r.x - W / 2 + r.w / 2, y + 0.035, r.z - D / 2 + r.d / 2);
+          m.renderOrder = 3;
+          this.floorGroups[fi].add(m);
+        });
+        y += floor.height;
+      });
+    }
+    this.styleRoof(st);
+    this.styleShadows(st, scene);
+    this.buildFloorTags();
+  }
+
+  wallMesh(s, h, thick, mat) {
+    const THREE = this.THREE;
+    const len = Math.hypot(s[2] - s[0], s[3] - s[1]);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(len + thick, h, thick), mat);
+    m.position.set((s[0] + s[2]) / 2, h / 2, (s[1] + s[3]) / 2);
+    if (Math.abs(s[2] - s[0]) < 1e-6) m.rotation.y = Math.PI / 2;
+    return m;
+  }
+
+  // Puppenhaus: Böden aus Holz, Fliesen oder Beton, Wände halbhoch aufgeschnitten,
+  // Temperatur als farbiger Schein auf dem Boden
+  buildDollhouse(part, rooms, y, h) {
+    const THREE = this.THREE;
+    const M = this._styleMats;
+    rooms.forEach((o) => {
+      const kind = floorKind(o.room.type);
+      const tex = canvasTexture(THREE, floorCanvas(kind));
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      const rep = kind === 'wood' ? 2 : 1.2;
+      tex.repeat.set(Math.max(1, o.w / rep), Math.max(1, o.d / rep));
+      const top = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 });
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(o.w, 0.18, o.d), [M.side, M.side, top, M.under, M.side, M.side]);
+      slab.position.set(o.cx, y - 0.09, o.cz);
+      slab.castShadow = true;
+      slab.receiveShadow = true;
+      part.add(slab);
+      const glow = new THREE.Mesh(new THREE.PlaneGeometry(o.w * 0.98, o.d * 0.98), new THREE.MeshBasicMaterial({
+        map: this._styleTex.radial,
+        transparent: true,
+        opacity: 0.8,
+        depthWrite: false
+      }));
+      glow.rotation.x = -Math.PI / 2;
+      glow.position.set(o.cx, y + 0.012, o.cz);
+      glow.renderOrder = 2;
+      glow.visible = false;
+      part.add(glow);
+      this._styleRooms[o.key] = { glow: glow };
+    });
+    const hw = Math.max(0.9, h * 0.45);
+    wallSegments(rooms).forEach((sg) => {
+      if (sg.open) return;
+      const thick = sg.n === 1 ? 0.26 : 0.12;
+      const wall = this.wallMesh(sg.s, hw, thick, M.wall);
+      wall.position.y += y;
+      wall.castShadow = true;
+      wall.receiveShadow = true;
+      part.add(wall);
+      const cap = this.wallMesh(sg.s, 0.025, thick + 0.004, M.cap);
+      cap.position.y = y + hw + 0.012;
+      part.add(cap);
+    });
+  }
+
+  // Wärmebild: Boden als Bild einer Wärmebildkamera, warme Luft als Schleier
+  buildThermal(part, rooms, y, h, fi) {
+    const THREE = this.THREE;
+    const M = this._styleMats;
+    if (!rooms.length) return;
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    rooms.forEach((o) => {
+      x0 = Math.min(x0, o.x0); x1 = Math.max(x1, o.x1);
+      z0 = Math.min(z0, o.z0); z1 = Math.max(z1, o.z1);
+    });
+    const ppm = Math.min(32, 512 / Math.max(x1 - x0, z1 - z0));
+    const W = Math.max(2, Math.ceil((x1 - x0) * ppm)), H = Math.max(2, Math.ceil((z1 - z0) * ppm));
+    const cv = document.createElement('canvas');
+    cv.width = W;
+    cv.height = H;
+    const tex = canvasTexture(THREE, cv);
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, depthWrite: false }));
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.set((x0 + x1) / 2, y + 0.02, (z0 + z1) / 2);
+    plane.renderOrder = 1;
+    part.add(plane);
+    const base = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 + 0.3, 0.14, z1 - z0 + 0.3), M.dark);
+    base.position.set((x0 + x1) / 2, y - 0.07, (z0 + z1) / 2);
+    part.add(base);
+    wallSegments(rooms).forEach((sg) => {
+      if (sg.open) return;
+      const wall = this.wallMesh(sg.s, 0.42, sg.n === 1 ? 0.12 : 0.07, M.darkWall);
+      wall.position.y += y;
+      part.add(wall);
+    });
+    rooms.forEach((o) => {
+      const veil = new THREE.Group();
+      const mat = new THREE.MeshBasicMaterial({ map: this._styleTex.rise, transparent: true, opacity: 0.55,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+      const hh = h * 0.8;
+      [[o.w, o.cx, o.z0, 0], [o.w, o.cx, o.z1, 0], [o.d, o.x0, o.cz, Math.PI / 2], [o.d, o.x1, o.cz, Math.PI / 2]].forEach((p) => {
+        const pl = new THREE.Mesh(new THREE.PlaneGeometry(p[0] * 0.98, hh), mat);
+        pl.position.set(p[1], y + hh / 2 + 0.05, p[2]);
+        pl.rotation.y = p[3];
+        pl.renderOrder = 3;
+        veil.add(pl);
+      });
+      veil.visible = false;
+      part.add(veil);
+      this._styleRooms[o.key] = { veil: veil, veilMat: mat };
+    });
+    this._heat[fi] = { cv: cv, tex: tex, rooms: rooms, x0: x0, z0: z0, ppm: ppm, W: W, H: H, sig: null, buf: null };
+  }
+
+  // Wärmebild neu zeichnen, nur wenn sich die Werte einer Etage geändert haben
+  updateThermal() {
+    (this._heat || []).forEach((ht) => {
+      if (!ht) return;
+      const rs = ht.rooms.map((o) => Object.assign({}, o, { v: this.normValue(o.fi, o.ri) }));
+      const sig = rs.map((o) => (o.v === null ? 'x' : o.v.toFixed(4))).join(',');
+      if (sig === ht.sig) return;
+      ht.sig = sig;
+      ht.buf = heatPixels(rs, ht.x0, ht.z0, ht.ppm, ht.W, ht.H);
+      const ctx = ht.cv.getContext('2d');
+      const img = (ctx && typeof ctx.createImageData === 'function') ? ctx.createImageData(ht.W, ht.H) : null;
+      if (img && img.data) {
+        img.data.set(ht.buf);
+        ctx.putImageData(img, 0, 0);
+      }
+      ht.tex.needsUpdate = true;
+    });
+  }
+
+  // Hologramm: leuchtende Kanten, Raster am Boden, Lichtsäule je Raum
+  buildHologram(part, rooms, y, h) {
+    const THREE = this.THREE;
+    const add = { transparent: true, blending: THREE.AdditiveBlending, depthWrite: false };
+    rooms.forEach((o) => {
+      const gt = canvasTexture(THREE, holoGridCanvas());
+      gt.wrapS = THREE.RepeatWrapping;
+      gt.wrapT = THREE.RepeatWrapping;
+      gt.repeat.set(Math.max(1, Math.round(o.w)), Math.max(1, Math.round(o.d)));
+      const grid = new THREE.Mesh(new THREE.PlaneGeometry(o.w, o.d), new THREE.MeshBasicMaterial(Object.assign({ map: gt, opacity: 0.55 }, add)));
+      grid.rotation.x = -Math.PI / 2;
+      grid.position.set(o.cx, y + 0.02, o.cz);
+      grid.renderOrder = 2;
+      part.add(grid);
+      const box = new THREE.BoxGeometry(o.w, h, o.d);
+      const vol = new THREE.Mesh(box, new THREE.MeshBasicMaterial(Object.assign({ opacity: 0.06 }, add)));
+      vol.position.set(o.cx, y + h / 2, o.cz);
+      part.add(vol);
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial(Object.assign({ opacity: 0.95 }, add)));
+      vol.add(edges);
+      const halo = new THREE.LineSegments(edges.geometry, new THREE.LineBasicMaterial(Object.assign({ color: HOLO_CYAN, opacity: 0.25 }, add)));
+      halo.scale.set(1.015, 1.01, 1.015);
+      vol.add(halo);
+      const r = clamp(Math.min(o.w, o.d) * 0.06, 0.12, 0.28);
+      const column = new THREE.Group();
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 24, 1, true),
+        new THREE.MeshBasicMaterial(Object.assign({ map: this._styleTex.rise, opacity: 0.95, side: THREE.DoubleSide }, add)));
+      const core = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.35, r * 0.35, 1, 12), new THREE.MeshBasicMaterial(Object.assign({ opacity: 0.9 }, add)));
+      column.add(beam);
+      column.add(core);
+      column.visible = false;
+      part.add(column);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(r * 1.6, r * 2.3, 48),
+        new THREE.MeshBasicMaterial(Object.assign({ side: THREE.DoubleSide, opacity: 0.8 }, add)));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(o.cx, y + 0.03, o.cz);
+      ring.visible = false;
+      part.add(ring);
+      const tag = this.makeValueTag();
+      part.add(tag);
+      this._styleRooms[o.key] = { grid: grid, vol: vol, edges: edges, column: column, beam: beam, core: core, ring: ring,
+        tag: tag, base: y, hmin: 0.35, hmax: h * 0.92, cx: o.cx, cz: o.cz };
+    });
+  }
+
+  // Waagrechte Scanebene, wandert im Hologramm langsam auf und ab
+  buildScan(scene, top) {
+    const THREE = this.THREE;
+    const hb = this._houseBounds;
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(hb.maxX - hb.minX + 1, hb.maxZ - hb.minZ + 1), new THREE.MeshBasicMaterial({
+      color: HOLO_CYAN, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.set((hb.minX + hb.maxX) / 2, top * 0.6, (hb.minZ + hb.maxZ) / 2);
+    plane.add(new THREE.LineSegments(new THREE.EdgesGeometry(plane.geometry), new THREE.LineBasicMaterial({
+      color: HOLO_CYAN, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending })));
+    scene.add(plane);
+    this._scan = plane;
+  }
+
+  animateScan(now) {
+    const s = this._scan;
+    if (!s || this._visible === false || this.styleNow() !== 'hologram') return false;
+    const hb = this._houseBounds;
+    const k = (Math.sin(now / 1000 * 0.6) + 1) / 2;
+    s.position.y = 0.1 + k * Math.max(0.5, hb.maxY - 0.3);
+    return true;
+  }
+
+  // Säulen: helle Tafeln je Raum, Temperatur als farbige Säule
+  buildColumns(part, rooms, y, h) {
+    const THREE = this.THREE;
+    const M = this._styleMats;
+    rooms.forEach((o) => {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(Math.max(0.1, o.w - 0.06), 0.1, Math.max(0.1, o.d - 0.06)), M.plate);
+      plate.position.set(o.cx, y - 0.05, o.cz);
+      plate.castShadow = true;
+      plate.receiveShadow = true;
+      part.add(plate);
+      const tile = new THREE.Mesh(new THREE.BoxGeometry(Math.max(0.1, o.w - 0.16), 0.03, Math.max(0.1, o.d - 0.16)),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 }));
+      tile.position.set(o.cx, y + 0.015, o.cz);
+      tile.receiveShadow = true;
+      part.add(tile);
+      const r = clamp(Math.min(o.w, o.d) * 0.14, 0.22, 0.55);
+      const column = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 40),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, metalness: 0.05 }));
+      column.castShadow = true;
+      column.visible = false;
+      part.add(column);
+      const tag = this.makeValueTag();
+      part.add(tag);
+      this._styleRooms[o.key] = { tile: tile, column: column, tag: tag, base: y + 0.03, hmin: 0.25, hmax: h * 0.95, cx: o.cx, cz: o.cz };
+    });
+  }
+
+  styleRoof(st) {
+    const roof = this.roofMesh;
+    if (!roof) return;
+    const set = {
+      dollhouse: [0xb0563d, 0x6b2d1f, 0.9],
+      thermal: [0x1a0b26, 0xff7a3d, 0.75],
+      hologram: [0x0a2533, HOLO_CYAN, 0.85],
+      columns: [0xffffff, 0x9aa3b2, 0.5],
+      classic: [0x6b4f3f, 0x3a2c24, 0.6]
+    }[st];
+    roof.material.color.setHex(set[0]);
+    roof.children.forEach((ch) => {
+      if (ch.isLineSegments) {
+        ch.material.color.setHex(set[1]);
+        ch.material.opacity = set[2];
+      }
+    });
+  }
+
+  roofOpacity() {
+    const st = this.styleNow();
+    const o = this.opacity;
+    if (st === 'dollhouse') return clamp(0.3 + o * 0.6, 0.3, 0.9);
+    if (st === 'thermal' || st === 'columns') return clamp(0.03 + o * 0.15, 0.03, 0.2);
+    if (st === 'hologram') return clamp(0.02 + o * 0.1, 0.02, 0.15);
+    return Math.min(0.9, o + 0.15);
+  }
+
+  // Schatten nach Sonnenstand im Puppenhaus und bei den Säulen
+  styleShadows(st, scene) {
+    const THREE = this.THREE;
+    const sun = this._sunLight;
+    const R = this._renderer;
+    const on = SHADOW_STYLES.indexOf(st) >= 0 && !!(R && R.shadowMap && sun && sun.shadow);
+    if (R && R.shadowMap) {
+      R.shadowMap.enabled = true;
+      R.shadowMap.type = THREE.PCFSoftShadowMap;
+    }
+    if (sun) sun.castShadow = on;
+    if (!on) return;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.0006;
+    this.updateShadowBounds();
+    const size = (this._groundR || 30) * 2;
+    const catcher = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.ShadowMaterial({ opacity: st === 'columns' ? 0.22 : 0.3 }));
+    catcher.rotation.x = -Math.PI / 2;
+    catcher.position.y = -0.005;
+    catcher.receiveShadow = true;
+    scene.add(catcher);
+  }
+
+  updateShadowBounds() {
+    const sun = this._sunLight;
+    if (!sun || !sun.castShadow || !sun.shadow || !this._houseBounds) return;
+    const hb = this._houseBounds;
+    let half = Math.max(hb.maxX - hb.minX, hb.maxZ - hb.minZ, hb.maxY - hb.minY) / 2 + 6;
+    const eb = this._envBounds;
+    if (eb && this.gardenVisible) half = Math.max(half, Math.abs(eb.minX), Math.abs(eb.maxX), Math.abs(eb.minZ), Math.abs(eb.maxZ)) + 2;
+    const sc = sun.shadow.camera;
+    sc.left = -half;
+    sc.right = half;
+    sc.top = half;
+    sc.bottom = -half;
+    sc.near = 0.5;
+    sc.far = 500;
+    sc.updateProjectionMatrix();
+  }
+
+  // Werteschild über einem Raum, gleich groß auf dem Bildschirm
+  makeValueTag() {
+    const THREE = this.THREE;
+    const made = makeTagTexture(THREE, '', '--', NO_VALUE);
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: made.texture, transparent: true, depthTest: false, depthWrite: false, sizeAttenuation: false }));
+    tag.center.set(0.5, 0);
+    tag.renderOrder = 9;
+    tag.userData = { text: '', aspect: made.aspect, px: 20 };
+    tag.visible = false;
+    this.scaleTag(tag);
+    return tag;
+  }
+
+  updateValueTag(tag, text, color) {
+    const key = text + '|' + color;
+    if (tag.userData.text === key) return;
+    const made = makeTagTexture(this.THREE, '', text, color);
+    if (tag.material.map) tag.material.map.dispose();
+    tag.material.map = made.texture;
+    tag.material.needsUpdate = true;
+    tag.userData.text = key;
+    tag.userData.aspect = made.aspect;
+    this.scaleTag(tag);
+  }
+
+  // Etagennamen neben dem Haus, erscheinen beim Auseinanderfahren
+  buildFloorTags() {
+    const THREE = this.THREE;
+    const cfg = this.config;
+    this.floorTags = [];
+    if (cfg.floors.length < 2) return;
+    const W = cfg.house.width, D = cfg.house.depth;
+    let baseY = 0;
+    cfg.floors.forEach((floor, fi) => {
+      let x0 = -W / 2, z1 = D / 2;
+      floor.rooms.forEach((r) => {
+        x0 = Math.min(x0, r.x - W / 2);
+        z1 = Math.max(z1, r.z - D / 2 + r.d);
+      });
+      const made = makeTagTexture(THREE, floor.name, '', 0x9aa3b2);
+      const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: made.texture, transparent: true, depthTest: false, depthWrite: false, sizeAttenuation: false }));
+      tag.center.set(1, 0.5);
+      tag.renderOrder = 9;
+      tag.userData = { aspect: made.aspect, px: 20, floorTag: true };
+      this.scaleTag(tag);
+      tag.position.set(x0 - 0.4, baseY + floor.height * 0.4, z1);
+      this.floorGroups[fi].add(tag);
+      this.floorTags.push(tag);
+      baseY += floor.height;
+    });
+    this.updateFloorTags();
+  }
+
+  updateFloorTags() {
+    const a = clamp((this.explode - 0.15) / 0.45, 0, 1);
+    (this.floorTags || []).forEach((t) => {
+      t.material.opacity = a;
+      t.visible = a > 0.01;
+    });
+  }
+
+  // Werte auf die Teile der Darstellung übertragen
+  updateStyle() {
+    const st = this.styleNow();
+    if (st === 'classic' || !this._styleRooms) return;
+    this.config.floors.forEach((floor, fi) => floor.rooms.forEach((room, ri) => {
+      const o = this._styleRooms[this.tempKey(fi, ri)];
+      if (!o) return;
+      const v = this.normValue(fi, ri);
+      const has = v !== null;
+      const col = this.valueColor(fi, ri, room);
+      if (o.glow) {
+        o.glow.visible = has;
+        o.glow.material.color.setHex(col);
+      }
+      if (o.veil) {
+        o.veil.visible = has;
+        if (has) o.veilMat.color.setHex(rampHex(IR_STOPS, v));
+      }
+      if (o.grid) {
+        [o.grid, o.vol, o.edges, o.ring, o.beam, o.core].forEach((m) => m.material.color.setHex(col));
+        o.ring.visible = has;
+      }
+      if (o.tile) o.tile.material.color.setHex(mixColor(col, 0xffffff, 0.78));
+      if (o.column) {
+        o.column.visible = has;
+        if (o.column.material) {
+          o.column.material.color.setHex(col);
+          o.column.material.emissive.setHex(mixColor(0x000000, col, 0.18));
+        }
+        const hgt = o.hmin + (has ? v : 0) * (o.hmax - o.hmin);
+        o.column.scale.y = hgt;
+        o.column.position.set(o.cx, o.base + 0.02 + hgt / 2, o.cz);
+        o.tag.visible = has;
+        o.tag.position.set(o.cx, o.base + 0.12 + hgt, o.cz);
+        if (has) this.updateValueTag(o.tag, this.shortValue(fi, ri), col);
+      }
+    }));
+    if (st === 'thermal') this.updateThermal();
+  }
+
+  // Knopf in der oberen Leiste: Etagen weich auseinander- und zusammenfahren
+  toggleExplode() {
+    this.animateExplode(this.explode > 0.5 ? 0 : 1);
+  }
+
+  animateExplode(to) {
+    const from = this.explode;
+    const target = clamp(to, 0, 1);
+    this.stopExplodeAnim();
+    this._explodeTarget = target;
+    this.paintExplodeBtn(target > 0.5);
+    if (!this._ready3D || this._stopped || Math.abs(target - from) < 1e-3) {
+      this.setExplode(target);
+      this.syncExplodeSlider();
+      return;
+    }
+    const dur = 900;
+    const start = Date.now();
+    const step = () => {
+      const k = clamp((Date.now() - start) / dur, 0, 1);
+      const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+      this.setExplode(from + (target - from) * e);
+      this.syncExplodeSlider();
+      this._explodeRaf = (k < 1 && !this._stopped) ? requestAnimationFrame(step) : 0;
+    };
+    this._explodeRaf = requestAnimationFrame(step);
+  }
+
+  stopExplodeAnim() {
+    if (this._explodeRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this._explodeRaf);
+    this._explodeRaf = 0;
+  }
+
+  paintExplodeBtn(on) {
+    const b = this.querySelector('#explode-btn');
+    if (!b) return;
+    b.classList.toggle('active', !!on);
+    b.setAttribute('aria-pressed', String(!!on));
+  }
+
+  syncExplodeSlider() {
+    const r = this.querySelector('#explode');
+    if (r) r.value = String(Math.round(this.explode * 100));
+  }
+
   /* ---------- 3D: Energiefluss ---------- */
 
   southern() {
@@ -2275,11 +3836,12 @@ class House3DCard extends HTMLElement {
 
   // Baut alles für den Energiefluss. Gibt die vorderste Kante der Geräte an der
   // unteren Seite zurück, damit die Außentafel nicht darauf liegt.
-  buildEnergy(roofMesh, rw, rd, hb) {
+  buildEnergy(roofMesh, rw, rd) {
     const THREE = this.THREE;
     const en = this.config.energy;
     this._energyObjs = {};
     this.flows = [];
+    this.pvPanels = [];
     this._pvSouth = this.southern();
     if (!ENERGY_ITEMS.some((it) => en[it.field])) return -Infinity;
 
@@ -2288,25 +3850,28 @@ class House3DCard extends HTMLElement {
     this.energyGroup = group;
     const items = {};
     ENERGY_ITEMS.forEach((it) => { items[it.key] = it; });
-    const ext = Math.max(hb.maxX - hb.minX, hb.maxZ - hb.minZ);
-    const sh = clamp(ext * 0.1, 0.9, 1.8);      // Höhe der Schilder
     let front = -Infinity;
 
     // Verteilpunkt im Haus: unter den Modulen, sonst in der Mitte des Hauptbaus
-    let hub = new THREE.Vector3(0, 0.15, 0);
-    if (en.pv_entity) {
-      const panel = this.buildPvPanel(roofMesh, rw, rd);
-      const sprite = this.makeEnergySprite(items.pv, sh);
-      sprite.position.set(0, 0, 0.5 + sh / 2);
-      panel.add(sprite);
-      this.pvPanel = panel;
-      const pc = panel.getWorldPosition(new THREE.Vector3());
-      hub = new THREE.Vector3(pc.x, 0.15, pc.z);
-      const flow = this.makeFlow(items.pv, [pc, hub]);
-      group.add(flow.line);
-      this._energyObjs.pv = { sprite: sprite, flow: flow };
-    }
+    const hub = new THREE.Vector3(0, 0.15, 0);
     this._energyHub = hub;
+    if (en.pv_entity) {
+      const panels = this.buildPvPanels(roofMesh, rw, rd);
+      this.pvPanels = panels;
+      const centers = panels.map((p) => p.getWorldPosition(new THREE.Vector3()));
+      hub.x = centers.reduce((s, c) => s + c.x, 0) / centers.length;
+      hub.z = centers.reduce((s, c) => s + c.z, 0) / centers.length;
+      // Ein Schild für die ganze Anlage, über der ersten Fläche
+      const tag = this.makeEnergyTag(items.pv);
+      tag.position.set(0, 0, 0.45);
+      panels[0].add(tag);
+      const flows = panels.map((p) => {
+        const f = this.makeFlow(items.pv, this.pvPath(p));
+        group.add(f.line);
+        return f;
+      });
+      this._energyObjs.pv = { tag: tag, flows: flows };
+    }
 
     const place = (key, dev, side, f) => {
       const u = dev.userData;
@@ -2317,14 +3882,14 @@ class House3DCard extends HTMLElement {
       dev.rotation.y = p.rot;
       u.r = Math.max(u.w, u.d) / 2;
       group.add(dev);
-      const sprite = this.makeEnergySprite(items[key], sh);
-      sprite.position.set(p.x, u.h + 0.35 + sh / 2, p.z);
-      group.add(sprite);
+      const tag = this.makeEnergyTag(items[key]);
+      tag.position.set(p.x, u.h + 0.25, p.z);
+      group.add(tag);
       // Leitung vom Verteilpunkt zur Rückseite des Geräts
       const back = new THREE.Vector3(p.x - Math.sin(p.rot) * u.d / 2, 0.15, p.z - Math.cos(p.rot) * u.d / 2);
       const flow = this.makeFlow(items[key], [hub, back]);
       group.add(flow.line);
-      this._energyObjs[key] = { device: dev, sprite: sprite, flow: flow };
+      this._energyObjs[key] = { device: dev, tag: tag, flows: [flow] };
       if (side === 'bottom') front = Math.max(front, p.z + u.r);
     };
     if (en.heatpump_entity) place('hp', this.makeHeatPump(), en.heatpump_side, 0.3);
@@ -2332,40 +3897,94 @@ class House3DCard extends HTMLElement {
     return front;
   }
 
-  // Module auf der Dachfläche, die am meisten zur Mittagssonne zeigt
-  buildPvPanel(roofMesh, rw, rd) {
+  // Dachflächen in Koordinaten des Daches. e: Mitte der Traufe, u: hangaufwärts,
+  // n: nach außen, bw und tw: Breite an Traufe und First, side: Seite im
+  // Grundriss, zu der die Fläche abfällt.
+  roofFaces(roofMesh, rw, rd) {
     const THREE = this.THREE;
     const r = this.config.roof;
-    const H = r.height;
-    const hw = rw / 2, hd = rd / 2;
+    const H = r.height, hw = rw / 2, hd = rd / 2;
     const V = (x, y, z) => new THREE.Vector3(x, y, z);
     const faces = [];
-    if (r.type === 'flat') {
-      faces.push({ c: V(0, 0.15, 0), u: V(0, 0, -1), n: V(0, 1, 0), len: rd });
-    } else if (r.type === 'mono') {
-      const sl = Math.hypot(H, rd);
-      faces.push({ c: V(0, H / 2, 0), u: V(0, H / sl, rd / sl), n: V(0, rd / sl, -H / sl), len: sl });
-    } else {
-      const sl = Math.hypot(H, hd);
-      faces.push({ c: V(0, H / 2, hd / 2), u: V(0, H / sl, -hd / sl), n: V(0, hd / sl, H / sl), len: sl });
-      faces.push({ c: V(0, H / 2, -hd / 2), u: V(0, H / sl, hd / sl), n: V(0, hd / sl, -H / sl), len: sl });
-    }
-    const want = this.southern() ? 0 : 180;
-    const north = this.config.orientation.north;
-    const off = (fc) => {
-      const v = fc.n.clone().applyAxisAngle(V(0, 1, 0), roofMesh.rotation.y);
-      if (Math.hypot(v.x, v.z) < 1e-6) return 0;
-      const az = north + Math.atan2(v.x, -v.z) * 180 / Math.PI;
-      return Math.abs(((((az - want) % 360) + 540) % 360) - 180);
+    const add = (e, top, along, bw, tw) => {
+      const d = top.clone().sub(e);
+      const len = d.length();
+      const u = d.normalize();
+      const n = new THREE.Vector3().crossVectors(along, u).normalize();
+      if (n.y < 0) n.negate();
+      const w = n.clone().applyAxisAngle(V(0, 1, 0), roofMesh.rotation.y);
+      const side = Math.abs(w.x) > Math.abs(w.z) ? (w.x > 0 ? 'right' : 'left') : (w.z > 0 ? 'bottom' : 'top');
+      faces.push({ e: e, u: u, n: n, len: len, bw: bw, tw: tw, side: side });
     };
-    const face = faces.reduce((a, b) => (off(b) < off(a) - 1e-6 ? b : a));
+    if (r.type === 'gable' || r.type === 'hip') {
+      const inset = r.type === 'hip' ? Math.min(hw * 0.6, hd) : 0;
+      add(V(0, 0, hd), V(0, H, 0), V(1, 0, 0), rw, rw - 2 * inset);
+      add(V(0, 0, -hd), V(0, H, 0), V(1, 0, 0), rw, rw - 2 * inset);
+      if (r.type === 'hip') {
+        add(V(-hw, 0, 0), V(-hw + inset, H, 0), V(0, 0, 1), rd, 0);
+        add(V(hw, 0, 0), V(hw - inset, H, 0), V(0, 0, 1), rd, 0);
+      }
+    } else if (r.type === 'mono') {
+      add(V(0, 0, -hd), V(0, H, hd), V(1, 0, 0), rw, rw);
+    }
+    return faces;
+  }
 
-    // Beim Walmdach wird die Fläche nach oben schmaler
-    const ph = face.len * (r.type === 'flat' ? 0.5 : 0.55);
-    const inset = r.type === 'hip' ? Math.min(hw * 0.6, hd) : 0;
-    const avail = rw - 2 * inset * (0.5 + ph / (2 * face.len));
-    const pw = Math.max(0.6, avail - 2 * Math.max(0.4, rw * 0.08));
+  // Module auf den gewählten Dachflächen. Ohne Auswahl auf der Fläche, die am
+  // meisten zur Mittagssonne zeigt, beim Flachdach flach liegend.
+  buildPvPanels(roofMesh, rw, rd) {
+    const THREE = this.THREE;
+    const r = this.config.roof;
+    const chosen = this.config.energy.pv_faces;
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
+    if (r.type === 'flat') {
+      const sides = SIDES.map((s) => s.value).filter((s) => chosen.indexOf(s) >= 0);
+      if (!sides.length) {
+        return [this.makePvPanel(roofMesh, V(0, 0.15, 0), V(0, 0, -1), V(0, 1, 0),
+          Math.max(0.6, rw - 2 * Math.max(0.4, rw * 0.08)), rd * 0.5)];
+      }
+      // Aufständerung: je gewählter Seite ein Feld, leicht zu dieser Seite geneigt
+      const dir = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
+      const alongX = rw >= rd;
+      sides.sort((a, b) => (alongX ? dir[a][0] - dir[b][0] : dir[a][1] - dir[b][1]));
+      const k = sides.length;
+      const sa = Math.sin(12 * Math.PI / 180), ca = Math.cos(12 * Math.PI / 180);
+      return sides.map((s, i) => {
+        const cw = alongX ? rw / k : rw, cd = alongX ? rd : rd / k;
+        const cx = alongX ? -rw / 2 + (i + 0.5) * cw : 0;
+        const cz = alongX ? 0 : -rd / 2 + (i + 0.5) * cd;
+        const dx = dir[s][0], dz = dir[s][1];
+        const along = dx !== 0 ? cw : cd;
+        const across = dx !== 0 ? cd : cw;
+        const ph = along * 0.6 / ca;
+        const pw = Math.max(0.6, across - 2 * Math.max(0.3, across * 0.08));
+        return this.makePvPanel(roofMesh, V(cx, 0.15 + ph / 2 * sa, cz),
+          V(-ca * dx, sa, -ca * dz), V(sa * dx, ca, sa * dz), pw, ph);
+      });
+    }
+
+    const faces = this.roofFaces(roofMesh, rw, rd);
+    let use = faces.filter((f) => chosen.indexOf(f.side) >= 0);
+    if (!use.length) {
+      const want = this.southern() ? 0 : 180;
+      const north = this.config.orientation.north;
+      const off = (f) => Math.abs(((((north + SIDE_AZ[f.side] - want) % 360) + 540) % 360) - 180);
+      use = [faces.reduce((a, b) => (off(b) < off(a) - 1e-6 ? b : a))];
+    }
+    return use.map((f) => {
+      // Dreieck des Walmdachs: unten breit, deshalb tiefer ansetzen
+      const tri = f.tw < f.bw * 0.5;
+      const t0 = tri ? 0.08 : 0.225, t1 = tri ? 0.54 : 0.775;
+      const wAt = (t) => f.bw + (f.tw - f.bw) * t;
+      const pw = Math.max(0.6, Math.min(wAt(t0), wAt(t1)) - 2 * Math.max(0.4, f.bw * 0.08));
+      const c = f.e.clone().addScaledVector(f.u, f.len * (t0 + t1) / 2);
+      return this.makePvPanel(roofMesh, c, f.u, f.n, pw, (t1 - t0) * f.len);
+    });
+  }
+
+  makePvPanel(roofMesh, c, u, n, pw, ph) {
+    const THREE = this.THREE;
     const tex = makePanelTexture(THREE);
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
@@ -2378,9 +3997,9 @@ class House3DCard extends HTMLElement {
       depthWrite: false,
       side: THREE.DoubleSide
     }));
-    const x = new THREE.Vector3().crossVectors(face.u, face.n);
-    panel.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, face.u, face.n));
-    panel.position.copy(face.c).addScaledVector(face.n, 0.06);
+    const x = new THREE.Vector3().crossVectors(u, n);
+    panel.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, u, n));
+    panel.position.copy(c).addScaledVector(n, 0.06);
     panel.renderOrder = 4;
     const edge = new THREE.LineSegments(new THREE.EdgesGeometry(panel.geometry),
       new THREE.LineBasicMaterial({ color: 0xffc400, transparent: true, opacity: 0.2 }));
@@ -2420,32 +4039,44 @@ class House3DCard extends HTMLElement {
     return g;
   }
 
-  // Schild mit Wert, das sich immer zur Kamera dreht
-  makeEnergySprite(item, h) {
+  // Kleines Schild in einer Zeile. Es behält auf dem Bildschirm seine Größe,
+  // dreht sich zum Betrachter und steht über seinem Ankerpunkt.
+  makeEnergyTag(item) {
     const THREE = this.THREE;
-    const made = makeBadgeTexture(THREE, item.label, '--', NO_VALUE);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    const made = makeTagTexture(THREE, item.tag, '--', NO_VALUE);
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({
       map: made.texture,
       transparent: true,
       depthTest: false,
-      depthWrite: false
+      depthWrite: false,
+      sizeAttenuation: false
     }));
-    sprite.scale.set(h * made.aspect, h, 1);
-    sprite.renderOrder = 7;
-    sprite.userData = { text: '', h: h, w: h * made.aspect };
-    return sprite;
+    tag.center.set(0.5, 0);
+    tag.renderOrder = 7;
+    tag.userData = { text: '', aspect: made.aspect };
+    this.scaleTag(tag);
+    return tag;
   }
 
-  updateEnergySprite(sprite, item, w, active) {
+  // Höhe TAG_PX Bildpunkte, unabhängig vom Abstand zur Kamera
+  scaleTag(tag) {
+    const fov = this._camera ? this._camera.fov : 50;
+    const s = (tag.userData.px || TAG_PX) * 2 * Math.tan(fov * Math.PI / 360) / (this._viewH || 600);
+    tag.scale.set(s * tag.userData.aspect, s, 1);
+  }
+
+  updateEnergyTag(tag, item, w, active) {
     const text = this.fmt().power(w);
     const color = active ? item.color : NO_VALUE;
     const key = text + '|' + color;
-    if (sprite.userData.text === key) return;
-    const made = makeBadgeTexture(this.THREE, item.label, text, color);
-    if (sprite.material.map) sprite.material.map.dispose();
-    sprite.material.map = made.texture;
-    sprite.material.needsUpdate = true;
-    sprite.userData.text = key;
+    if (tag.userData.text === key) return;
+    const made = makeTagTexture(this.THREE, item.tag, text, color);
+    if (tag.material.map) tag.material.map.dispose();
+    tag.material.map = made.texture;
+    tag.material.needsUpdate = true;
+    tag.userData.text = key;
+    tag.userData.aspect = made.aspect;
+    this.scaleTag(tag);
   }
 
   // Leitung mit wandernden Punkten in Flussrichtung
@@ -2501,12 +4132,21 @@ class House3DCard extends HTMLElement {
     flow.dots.forEach((d, i) => this.pointOnPath(flow, (i / n + flow.phase) % 1, d.position));
   }
 
-  // Die Leitung der Module folgt dem Dach, wenn die Etagen angehoben werden
+  // Von der Mitte einer Modulfläche senkrecht nach unten, dann zum Verteilpunkt
+  pvPath(panel) {
+    const c = panel.getWorldPosition(new this.THREE.Vector3());
+    const hub = this._energyHub;
+    const below = new this.THREE.Vector3(c.x, hub.y, c.z);
+    return below.distanceTo(hub) > 0.01 ? [c, below, hub] : [c, hub];
+  }
+
+  // Die Leitungen der Module folgen dem Dach, wenn die Etagen angehoben werden
   updateFlowPaths() {
     const pv = this._energyObjs && this._energyObjs.pv;
-    if (!pv || !this.pvPanel || !this._energyHub) return;
-    const pc = this.pvPanel.getWorldPosition(new this.THREE.Vector3());
-    this.setFlowPath(pv.flow, [pc, this._energyHub]);
+    if (!pv || !this._energyHub) return;
+    pv.flows.forEach((f, i) => {
+      if (this.pvPanels[i]) this.setFlowPath(f, this.pvPath(this.pvPanels[i]));
+    });
   }
 
   updateEnergy() {
@@ -2516,20 +4156,23 @@ class House3DCard extends HTMLElement {
       if (!o) return;
       const w = this.energy[it.key];
       const active = hasValue(w) && w > FLOW_MIN_W;
-      this.updateEnergySprite(o.sprite, it, w, active);
-      const f = o.flow;
-      f.active = active;
-      // Schneller bei mehr Leistung, logarithmisch, damit kleine Werte sichtbar bleiben
-      f.speed = active ? 0.6 + 0.6 * Math.log10(1 + w / 100) : 0;
-      f.line.material.opacity = active ? 0.45 : 0.12;
-      f.dots.forEach((d) => { d.visible = active; });
+      this.updateEnergyTag(o.tag, it, w, active);
+      o.flows.forEach((f) => {
+        f.active = active;
+        // Schneller bei mehr Leistung, logarithmisch, damit kleine Werte sichtbar bleiben
+        f.speed = active ? 0.6 + 0.6 * Math.log10(1 + w / 100) : 0;
+        f.line.material.opacity = active ? 0.45 : 0.12;
+        f.dots.forEach((d) => { d.visible = active; });
+      });
       if (o.device && o.device.userData.lamp) o.device.userData.lamp.material.color.setHex(active ? it.color : 0x5d6675);
     });
-    if (this.pvPanel) {
+    if (this.pvPanels.length) {
       const w = this.energy.pv;
       const ratio = hasValue(w) ? clamp(w / (this.config.energy.pv_peak * 1000), 0, 1) : 0;
-      this.pvPanel.material.color.setHex(mixColor(0x5f6878, 0xffffff, ratio));
-      this.pvPanel.userData.edge.material.opacity = 0.2 + 0.8 * ratio;
+      this.pvPanels.forEach((p) => {
+        p.material.color.setHex(mixColor(0x5f6878, 0xffffff, ratio));
+        p.userData.edge.material.opacity = 0.2 + 0.8 * ratio;
+      });
     }
   }
 
@@ -2571,9 +4214,12 @@ class House3DCard extends HTMLElement {
     if (this.outdoorMesh) this.outdoorMesh.visible = this.outdoorVisible;
     if (this.compassGroup) this.compassGroup.visible = this.sunVisible;
     if (this.energyGroup) this.energyGroup.visible = this.energyVisible;
-    if (this.pvPanel) this.pvPanel.visible = this.energyVisible;
+    if (this._gardenGroup) this._gardenGroup.visible = this.gardenVisible;
+    this.paintGround();
+    this.updateShadowBounds();
+    this.pvPanels.forEach((pn) => { pn.visible = this.energyVisible; });
     const pvo = this._energyObjs && this._energyObjs.pv;
-    if (pvo) pvo.flow.line.visible = !this.roofHidden;
+    if (pvo) pvo.flows.forEach((f) => { f.line.visible = !this.roofHidden; });
     this.updateSun(this.isLive() ? Date.now() : this.histBuckets[this.histIndex], true);
     this.requestRender();
   }
@@ -2598,41 +4244,80 @@ class House3DCard extends HTMLElement {
     if (!force && Math.abs(t - (this._sunT || 0)) < 60000) return;
     this._sunT = t;
     const light = this._sunLight;
-    const pos = this.sunVisible ? this.sunAt(t) : null;
+    const at = this.sunAt(t);
+    this.paintSky(at ? at.elevation : null);
+    const pos = this.sunVisible ? at : null;
     this.sunPos = pos;
     const hb = this._houseBounds;
     const cx = (hb.minX + hb.maxX) / 2, cy = (hb.minY + hb.maxY) / 2, cz = (hb.minZ + hb.maxZ) / 2;
     light.target.position.set(cx, cy, cz);
+    const R = Math.max(hb.maxX - hb.minX, hb.maxZ - hb.minZ, hb.maxY - hb.minY) * 0.9 + 6;
+    const moon = this.updateMoon(t, R, cx, cy, cz);
+    this.applyTimeOfDay(at ? at.elevation : null, t);
+    const amb = this._ambient;
     if (!pos) {
       this.sunMesh.visible = false;
       light.position.set(cx + 20, cy + 30, cz + 16);
       light.intensity = 1.3;
+      light.color.setHex(0xffffff);
+      if (amb) {
+        amb.color.setHex(0xffffff);
+        amb.intensity = 1.0;
+      }
       this.requestRender();
       return;
     }
     const dir = compassToScene(pos.azimuth, pos.elevation, this.config.orientation.north);
-    const R = Math.max(hb.maxX - hb.minX, hb.maxZ - hb.minZ, hb.maxY - hb.minY) * 0.9 + 6;
     this.sunMesh.position.set(cx + dir.x * R, cy + dir.y * R, cz + dir.z * R);
     this.sunMesh.visible = pos.elevation > -1;
     if (pos.elevation > 0) {
+      // Tief stehende Sonne färbt das Licht warm
+      const warm = clamp(pos.elevation / 14, 0, 1);
       light.position.copy(this.sunMesh.position);
       light.intensity = 0.5 + 1.1 * Math.sin(pos.elevation * Math.PI / 180);
+      light.color.setHex(mixColor(0xff9a52, 0xffffff, warm));
+      if (amb) {
+        amb.color.setHex(mixColor(0xffd9bd, 0xffffff, warm));
+        amb.intensity = 1.0;
+      }
     } else {
-      // Nachts schwaches Licht von oben, damit die Farben lesbar bleiben
-      light.position.set(cx, cy + 30, cz);
-      light.intensity = 0.35;
+      // Nachts kühles, schwaches Licht vom Mond oder von oben, die Farben bleiben lesbar
+      if (moon && moon.elevation > 0 && this.moonMesh.visible) {
+        light.position.copy(this.moonMesh.position);
+        light.intensity = 0.25 + 0.2 * moon.fraction;
+      } else {
+        light.position.set(cx, cy + 30, cz);
+        light.intensity = 0.35;
+      }
+      light.color.setHex(0xb8c4ff);
+      if (amb) {
+        amb.color.setHex(0xd5dcff);
+        amb.intensity = 0.85;
+      }
     }
     this.requestRender();
   }
 
   applyOpacity() {
+    const classic = this.styleNow() === 'classic';
     this.roomMeshes.forEach((m) => {
       const sel = !!(this.selected && m.userData.fi === this.selected.fi && m.userData.ri === this.selected.ri);
-      const base = m.userData.open ? this.opacity * 0.4 : this.opacity;
-      m.material.opacity = sel ? Math.min(1, base + 0.45) : base;
-      if (m.userData.glow) m.userData.glow.material.opacity = (sel || m.userData.isOpen) ? 1 : (m.userData.open ? 0.8 : 0.4);
+      const g = m.userData.glow;
+      if (classic) {
+        const base = m.userData.open ? this.opacity * 0.4 : this.opacity;
+        m.material.opacity = sel ? Math.min(1, base + 0.45) : base;
+        if (g) {
+          g.visible = true;
+          g.material.opacity = (sel || m.userData.isOpen) ? 1 : (m.userData.open ? 0.8 : 0.4);
+        }
+      } else if (g) {
+        // Nur Auswahl und offene Fenster zeigen den Umriss des Raumes
+        g.visible = sel || !!m.userData.isOpen;
+        g.material.opacity = 1;
+        if (sel && !m.userData.isOpen) g.material.color.setHex(0xffffff);
+      }
     });
-    if (this.roofMesh) this.roofMesh.material.opacity = Math.min(0.9, this.opacity + 0.15);
+    if (this.roofMesh) this.roofMesh.material.opacity = this.roofOpacity();
     this.slabMeshes.forEach((s) => { s.material.opacity = Math.min(1, this.opacity + 0.35); });
     this.requestRender();
   }
@@ -2691,12 +4376,12 @@ class House3DCard extends HTMLElement {
         const o = this._energyObjs[k];
         if (!o) return;
         const q = o.device.position;
-        grow(q.x, q.z, Math.max(o.device.userData.r, o.sprite.userData.w / 2), o.sprite.position.y + o.sprite.userData.h / 2);
+        grow(q.x, q.z, o.device.userData.r, o.tag.position.y);
       });
       const pv = this._energyObjs.pv;
-      if (pv && this.pvPanel && this.pvPanel.visible && this.roofGroup && this.roofGroup.visible) {
-        const q = pv.sprite.getWorldPosition(new this.THREE.Vector3());
-        grow(q.x, q.z, pv.sprite.userData.w / 2, q.y + pv.sprite.userData.h / 2);
+      if (pv && this.roofGroup && this.roofGroup.visible) {
+        const q = pv.tag.getWorldPosition(new this.THREE.Vector3());
+        grow(q.x, q.z, 0, q.y);
       }
     }
     return b;
@@ -2800,6 +4485,8 @@ class House3DCard extends HTMLElement {
     const B = this.cameraBasis(o.theta, o.phi);
     cam.position.set(o.target.x + o.radius * B.back.x, o.target.y + o.radius * B.back.y, o.target.z + o.radius * B.back.z);
     cam.lookAt(o.target.x, o.target.y, o.target.z);
+    if (this._sky) this._sky.position.copy(cam.position);
+    if (this._stars) this._stars.position.copy(cam.position);
     const far = Math.max(1000, o.radius * 20);
     if (cam.far !== far) {
       cam.far = far;
@@ -2899,7 +4586,9 @@ class House3DCard extends HTMLElement {
     } else {
       this._lastT = 0;
     }
-    if (this.animateFlows(now)) this.scheduleFlowFrame();
+    const flowing = this.animateFlows(now);
+    const scanning = this.animateScan(now);
+    if (flowing || scanning) this.scheduleFlowFrame();
     this._renderer.render(this._scene, this._camera);
   }
 
@@ -2941,6 +4630,7 @@ class House3DCard extends HTMLElement {
     this._camera.aspect = w / h;
     this._camera.updateProjectionMatrix();
     this._renderer.setSize(w, h);
+    this._scene.traverse((o) => { if (o.isSprite && o.userData && o.userData.aspect) this.scaleTag(o); });
     // Solange niemand verschoben oder gezoomt hat, bleibt das Haus mittig
     if (this._autoFit) this.fitView(false);
     this.requestRender();
@@ -3118,6 +4808,14 @@ function makeField(label, type) {
   return wrap;
 }
 
+// Gewählte Knöpfe in der Hauptfarbe von Home Assistant
+function paintToggle(b, active) {
+  b.style.border = '1px solid var(--divider-color)';
+  b.style.background = active ? 'var(--primary-color)' : 'transparent';
+  b.style.color = active ? 'var(--text-primary-color)' : 'var(--primary-text-color)';
+  b.style.fontWeight = active ? '600' : '400';
+}
+
 function typeFieldValue(type) {
   const t = findRoomType(type);
   return t ? t.label : String(type || '');
@@ -3138,6 +4836,7 @@ class House3DCardEditor extends HTMLElement {
       title: c.title || '',
       opacity: typeof c.opacity === 'number' ? c.opacity : 40,
       display: MODES.some((m) => m.value === c.display) ? c.display : 'temp',
+      style: STYLES.some((x) => x.value === c.style) ? c.style : 'dollhouse',
       house: {
         width: (c.house && c.house.width) || base.house.width,
         depth: (c.house && c.house.depth) || base.house.depth
@@ -3157,6 +4856,7 @@ class House3DCardEditor extends HTMLElement {
       energy: {
         pv_entity: str(en.pv_entity),
         pv_peak: en.pv_peak !== undefined ? en.pv_peak : 10,
+        pv_faces: cleanList(en.pv_faces).filter((x) => SIDES.some((y) => y.value === x)),
         heatpump_entity: str(en.heatpump_entity),
         heatpump_side: SIDES.some((x) => x.value === en.heatpump_side) ? en.heatpump_side : 'right',
         wallbox_entity: str(en.wallbox_entity),
@@ -3261,6 +4961,8 @@ class House3DCardEditor extends HTMLElement {
         </div>
 
         <div>
+          <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Darstellung beim Öffnen</div>
+          <div id="style-buttons-ed" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px;"></div>
           <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Anzeige beim Öffnen</div>
           <div id="display-buttons" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
             <button type="button" class="disp-btn" data-mode="temp" style="${btn}">Temperatur</button>
@@ -3293,7 +4995,12 @@ class House3DCardEditor extends HTMLElement {
           <div style="font-weight:600;">Energiefluss</div>
           <div id="pv-field"></div>
           <div>${fieldHtml('f-pv-peak', 'Spitzenleistung der PV-Anlage in kWp', 'number', 'step="0.1" min="0.1" max="10000"')}</div>
-          <div style="${HINT_CSS}margin-top:-6px;">Bestimmt, wie hell die Module leuchten. Die Module liegen auf der Dachfläche, die am meisten nach Süden zeigt.</div>
+          <div style="${HINT_CSS}margin-top:-6px;">Bestimmt, wie hell die Module leuchten.</div>
+          <div>
+            <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Dachflächen mit PV-Modulen</div>
+            <div id="pv-faces" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;"></div>
+            <div id="pv-faces-hint" style="${HINT_CSS}margin-top:6px;"></div>
+          </div>
           <div id="hp-field"></div>
           <div>
             <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">Wärmepumpe steht im Grundriss</div>
@@ -3419,7 +5126,10 @@ class House3DCardEditor extends HTMLElement {
     numField('#f-roof-oh', 0,   2,     0.4, (v) => { this._config.roof.overhang = v; });
     numField('#f-hist',    0,   26280, 0,   (v) => { this._config.history.hours = Math.round(v); });
     numField('#f-fluct',   0,   8760,  24,  (v) => { this._config.fluctuation.hours = Math.round(v); });
-    numField('#f-north',   0,   359,   0,   (v) => { this._config.orientation.north = Math.round(v) % 360; });
+    numField('#f-north',   0,   359,   0,   (v) => {
+      this._config.orientation.north = Math.round(v) % 360;
+      this._buildPvFaces();
+    });
 
     this.querySelectorAll('.north-btn').forEach((b) => {
       b.addEventListener('click', () => {
@@ -3480,6 +5190,22 @@ class House3DCardEditor extends HTMLElement {
         this._fire();
       });
       roofBox.appendChild(b);
+    });
+
+    const styleBox = this.querySelector('#style-buttons-ed');
+    STYLES.forEach((st) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'style-btn';
+      b.dataset.style = st.value;
+      b.textContent = st.label;
+      b.style.cssText = btn;
+      b.addEventListener('click', () => {
+        this._config.style = st.value;
+        this._refresh();
+        this._fire();
+      });
+      styleBox.appendChild(b);
     });
 
     this.querySelectorAll('.disp-btn').forEach((b) => {
@@ -3547,6 +5273,45 @@ class House3DCardEditor extends HTMLElement {
 
     this._setupCanvas();
     this._refresh();
+  }
+
+  // Knöpfe für die Dachflächen der aktuellen Dachform, beschriftet mit der
+  // Himmelsrichtung aus der Ausrichtung des Hauses. Mehrere sind wählbar.
+  _buildPvFaces() {
+    const box = this.querySelector('#pv-faces');
+    if (!box) return;
+    const cfg = this._config;
+    const en = cfg.energy;
+    if (!Array.isArray(en.pv_faces)) en.pv_faces = cleanList(en.pv_faces);
+    const north = Number(cfg.orientation.north) || 0;
+    box.innerHTML = '';
+    pvSidesFor(cfg.roof).forEach((side) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pv-face-btn';
+      b.dataset.side = side;
+      const sideLabel = SIDES.find((x) => x.value === side).label.toLowerCase();
+      b.innerHTML = compassName(north + SIDE_AZ[side]) + '<br><span style="font-size:11px;opacity:.75;">' + sideLabel + '</span>';
+      b.style.cssText = 'padding:6px 4px;border-radius:6px;cursor:pointer;line-height:1.3;font-family:inherit;';
+      paintToggle(b, en.pv_faces.indexOf(side) >= 0);
+      b.addEventListener('click', () => {
+        const list = this._config.energy.pv_faces;
+        const i = list.indexOf(side);
+        if (i >= 0) list.splice(i, 1); else list.push(side);
+        this._buildPvFaces();
+        this._fire();
+      });
+      box.appendChild(b);
+    });
+    const hint = this.querySelector('#pv-faces-hint');
+    if (!hint) return;
+    if (cfg.roof.type === 'flat') {
+      hint.textContent = 'Beim Flachdach werden die Module leicht zur gewählten Seite geneigt, bei mehreren Seiten nebeneinander. Ohne Auswahl liegen sie flach.';
+    } else if (cfg.roof.type === 'mono') {
+      hint.textContent = 'Das Pultdach hat nur eine Fläche.';
+    } else {
+      hint.textContent = 'Mehrere Flächen sind möglich, etwa Ost und West. Ohne Auswahl die Fläche, die am meisten nach Süden zeigt. Die Himmelsrichtung folgt aus der Ausrichtung oben.';
+    }
   }
 
   // Auswahlfeld für eine Entität. ha-selector nur verwenden, wenn es
@@ -3853,18 +5618,16 @@ class House3DCardEditor extends HTMLElement {
       if (el && document.activeElement !== el) el.value = this._config.energy[k] || '';
     });
 
-    const paint = (b, active) => {
-      b.style.border = '1px solid var(--divider-color)';
-      b.style.background = active ? 'var(--primary-color)' : 'transparent';
-      b.style.color = active ? 'var(--text-primary-color)' : 'var(--primary-text-color)';
-      b.style.fontWeight = active ? '600' : '400';
-    };
+    const paint = paintToggle;
     this.querySelectorAll('.roof-btn').forEach((b) => paint(b, b.dataset.type === this._config.roof.type));
     this.querySelectorAll('.axis-btn').forEach((b) => paint(b, b.dataset.axis === this._config.roof.axis));
     this.querySelectorAll('.disp-btn').forEach((b) => paint(b, b.dataset.mode === this._config.display));
+    this.querySelectorAll('.style-btn').forEach((b) => paint(b, b.dataset.style === this._config.style));
     this.querySelectorAll('.north-btn').forEach((b) => paint(b, parseInt(b.dataset.north, 10) === Math.round(Number(this._config.orientation.north) || 0)));
     this.querySelectorAll('.hp-side-btn').forEach((b) => paint(b, b.dataset.side === this._config.energy.heatpump_side));
     this.querySelectorAll('.wb-side-btn').forEach((b) => paint(b, b.dataset.side === this._config.energy.wallbox_side));
+
+    this._buildPvFaces();
 
     const showRidge = this._config.roof.type === 'gable' || this._config.roof.type === 'mono';
     this.querySelector('#ridge-row').style.display = showRidge ? 'block' : 'none';
