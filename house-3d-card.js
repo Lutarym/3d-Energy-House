@@ -5,7 +5,7 @@
  * offenen Fenstern, Sonnenstand, Energiefluss, fünf Darstellungen und Garten.
  */
 
-const VERSION = '4.5.0';
+const VERSION = '4.6.0';
 const CARD_TAG = 'house-3d-card';
 const EDITOR_TAG = 'house-3d-card-editor';
 
@@ -103,6 +103,12 @@ const ENERGY_ITEMS = [
 const TAG_PX = 22;             // Höhe der Energieschilder in Bildpunkten
 // Himmelsrichtung, in die eine Seite des Grundrisses zeigt, wenn oben Norden ist
 const SIDE_AZ = { top: 0, right: 90, bottom: 180, left: 270 };
+
+// Menüeinstellungen je Benutzer in Home Assistant, über frontend/set_user_data.
+// Der Schlüssel enthält den Titel der Karte, Karten mit gleichem Titel teilen
+// sich die Einstellungen. Der Zwischenspeicher gilt für alle Karten der Seite.
+const PREFS_KEY = 'house_3d_card';
+const PREFS_CACHE = new Map();
 const COMPASS8 = ['Nord', 'Nordost', 'Ost', 'Südost', 'Süd', 'Südwest', 'West', 'Nordwest'];
 
 // Darstellungen der Karte, im Menü umschaltbar
@@ -1363,6 +1369,7 @@ class House3DCard extends HTMLElement {
     this._entityIds = this.collectEntities();
     this._statIds = this.collectStatEntities();
     this.applySizing();
+    this.loadPrefs();
     if (!this._built) return;
 
     this.stopPlay();
@@ -1392,6 +1399,7 @@ class House3DCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    if (first) this.loadPrefs();
     if (!this._built) return;
     if (this._ready3D && this.pvPanels.length && this.southern() !== this._pvSouth) {
       this.rebuildScene();
@@ -1566,11 +1574,15 @@ class House3DCard extends HTMLElement {
     on('rot-right', 'click', () => this.rotateStep(-0.4));
     on('pan-mode', 'click', () => this.setPanMode(!this._panMode));
     on('auto-rot', 'click', () => this.setAuto(!this._auto));
-    on('explode-btn', 'click', () => this.toggleExplode());
+    on('explode-btn', 'click', () => {
+      this.toggleExplode();
+      this.savePrefs();
+    });
     on('reset-cam', 'click', () => this.recenter());
     on('opacity', 'input', (e) => {
       this.opacity = parseInt(e.target.value, 10) / 100;
       this.applyOpacity();
+      this.savePrefs();
     });
     on('hist-slider', 'input', (e) => {
       this.stopPlay();
@@ -1585,7 +1597,7 @@ class House3DCard extends HTMLElement {
     const title = this.querySelector('#card-title');
     title.textContent = cfg.title;
     title.style.display = cfg.title ? '' : 'none';
-    this.querySelector('#opacity').value = String(Math.round(cfg.opacity));
+    this.querySelector('#opacity').value = String(Math.round(this.opacity * 100));
     this.buildToggles();
     this.buildStyleButtons();
     this.buildModeButtons();
@@ -1595,6 +1607,115 @@ class House3DCard extends HTMLElement {
     this.buildLegend();
     this.buildRoomsList();
     this.renderHistBar();
+  }
+
+  /* ---------- Menüeinstellungen merken ---------- */
+
+  prefsKey() {
+    const t = String(this.config.title || '').trim();
+    return PREFS_KEY + (t ? ':' + t : '');
+  }
+
+  // Liest die gespeicherten Einstellungen dieses Benutzers einmal je Seite
+  loadPrefs() {
+    const h = this._hass;
+    if (!h || typeof h.callWS !== 'function') return;
+    const key = this.prefsKey();
+    if (PREFS_CACHE.has(key)) {
+      // Erst nach dem Aufbau anwenden: Home Assistant setzt preview direkt danach
+      Promise.resolve().then(() => { if (this.prefsKey() === key) this.applyPrefs(PREFS_CACHE.get(key)); });
+      return;
+    }
+    if (this._prefsLoading === key) return;
+    this._prefsLoading = key;
+    Promise.resolve()
+      .then(() => h.callWS({ type: 'frontend/get_user_data', key: key }))
+      .then((r) => {
+        const v = r && r.value && typeof r.value === 'object' && !Array.isArray(r.value) ? r.value : null;
+        if (!PREFS_CACHE.has(key)) PREFS_CACHE.set(key, v);
+        if (this._prefsLoading === key) this._prefsLoading = null;
+        if (this.prefsKey() === key) this.applyPrefs(PREFS_CACHE.get(key));
+      })
+      .catch((e) => {
+        if (this._prefsLoading === key) this._prefsLoading = null;
+        console.warn('3D Energy House: gespeicherte Einstellungen nicht lesbar', e);
+      });
+  }
+
+  prefsSig() {
+    return JSON.stringify([this.styleName, this.displayMode, this.opacity, this.explode, [...this.hiddenFloors].sort(),
+      this.roofHidden, this.labelsVisible, this.outdoorVisible, this.energyVisible, this.gardenVisible, this.sunVisible]);
+  }
+
+  // Übernimmt gespeicherte Einstellungen. Hat sich im Editor seither Darstellung,
+  // Anzeige oder Transparenz beim Öffnen geändert, gilt dort der Editor.
+  // In der Vorschau des Editors zählt nur die Konfiguration.
+  applyPrefs(p) {
+    if (this._preview || !p || typeof p !== 'object') return;
+    const cfg = this.config;
+    const base = (p.base && typeof p.base === 'object') ? p.base : {};
+    const before = this.prefsSig();
+    let editorChanged = false;
+    const fromPrefs = (k, cfgVal) => {
+      if (base[k] === cfgVal) return true;
+      editorChanged = true;
+      return false;
+    };
+    if (fromPrefs('style', cfg.style) && STYLES.some((x) => x.value === p.style)) this.styleName = p.style;
+    if (fromPrefs('display', cfg.display) && MODES.some((m) => m.value === p.display)) this.displayMode = p.display;
+    if (fromPrefs('opacity', cfg.opacity) && typeof p.opacity === 'number') this.opacity = clamp(p.opacity, 0.05, 1);
+    if (Array.isArray(p.hidden)) {
+      this.hiddenFloors = new Set(p.hidden.filter((i) => Number.isInteger(i) && i >= 0 && i < cfg.floors.length));
+    }
+    const bool = (v, fallback) => (typeof v === 'boolean' ? v : fallback);
+    this.roofHidden = !bool(p.roof, !this.roofHidden);
+    this.labelsVisible = bool(p.labels, this.labelsVisible);
+    this.outdoorVisible = bool(p.outdoor, this.outdoorVisible);
+    this.energyVisible = bool(p.energy, this.energyVisible);
+    this.gardenVisible = bool(p.garden, this.gardenVisible);
+    this.sunVisible = bool(p.sun, this.sunVisible);
+    if (typeof p.explode === 'number') this.explode = cfg.floors.length > 1 ? clamp(p.explode, 0, 1) : 0;
+    if (this.prefsSig() !== before && this._built) {
+      this.stopExplodeAnim();
+      this.renderStatic();
+      if (this._ready3D) {
+        this.rebuildScene();
+        this.applyExplode();
+      }
+      this.applyOpacity();
+      this.refreshView();
+    }
+    if (editorChanged) this.savePrefs();
+  }
+
+  // Schreibt die aktuellen Menüeinstellungen kurz verzögert für diesen Benutzer
+  savePrefs() {
+    const h = this._hass;
+    if (this._preview || !h || typeof h.callWS !== 'function') return;
+    const cfg = this.config;
+    const key = this.prefsKey();
+    const p = {
+      style: this.styleNow(),
+      display: this.displayMode,
+      opacity: Math.round(this.opacity * 100) / 100,
+      explode: Math.round((this._explodeRaf ? this._explodeTarget : this.explode) * 100) / 100,
+      hidden: [...this.hiddenFloors].sort((a, b) => a - b),
+      roof: !this.roofHidden,
+      labels: this.labelsVisible,
+      outdoor: this.outdoorVisible,
+      energy: this.energyVisible,
+      garden: this.gardenVisible,
+      sun: this.sunVisible,
+      base: { style: cfg.style, display: cfg.display, opacity: cfg.opacity }
+    };
+    PREFS_CACHE.set(key, p);
+    if (this._prefsTimer) clearTimeout(this._prefsTimer);
+    this._prefsTimer = setTimeout(() => {
+      this._prefsTimer = null;
+      Promise.resolve()
+        .then(() => h.callWS({ type: 'frontend/set_user_data', key: key, value: p }))
+        .catch((e) => console.warn('3D Energy House: Einstellungen nicht gespeichert', e));
+    }, 500);
   }
 
   setMenu(open) {
@@ -1616,7 +1737,10 @@ class House3DCard extends HTMLElement {
     const box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = checked;
-    box.addEventListener('change', () => cb(box.checked));
+    box.addEventListener('change', () => {
+      cb(box.checked);
+      this.savePrefs();
+    });
     const txt = document.createElement('span');
     txt.textContent = label;
     row.appendChild(box);
@@ -1677,6 +1801,7 @@ class House3DCard extends HTMLElement {
         this.stopExplodeAnim();
         this.setExplode(parseInt(range.value, 10) / 100);
         this.paintExplodeBtn(this.explode > 0.5);
+        this.savePrefs();
       });
       wrap.appendChild(range);
       box.appendChild(wrap);
@@ -1739,7 +1864,10 @@ class House3DCard extends HTMLElement {
       b.dataset.mode = m.value;
       b.textContent = m.label;
       if (m.value === this.mode()) b.classList.add('active');
-      b.addEventListener('click', () => this.setMode(m.value));
+      b.addEventListener('click', () => {
+        this.setMode(m.value);
+        this.savePrefs();
+      });
       box.appendChild(b);
     });
   }
@@ -3289,7 +3417,10 @@ class House3DCard extends HTMLElement {
       b.dataset.style = s.value;
       b.textContent = s.label;
       if (s.value === this.styleNow()) b.classList.add('active');
-      b.addEventListener('click', () => this.setStyle(s.value));
+      b.addEventListener('click', () => {
+        this.setStyle(s.value);
+        this.savePrefs();
+      });
       box.appendChild(b);
     });
   }
@@ -6394,6 +6525,8 @@ class House3DCardEditor extends HTMLElement {
     };
     cv.addEventListener('pointerup', (e) => finish(e, false));
     cv.addEventListener('pointercancel', (e) => finish(e, true));
+    // Verlässt der Fokus den Plan, etwa beim Klick auf Speichern, sofort übergeben
+    cv.addEventListener('blur', () => this._flushFire());
 
     if (window.ResizeObserver) {
       this._cvRo = new ResizeObserver(() => this._drawPlan());

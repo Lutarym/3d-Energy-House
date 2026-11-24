@@ -23,6 +23,7 @@ Drehbare 3D-Darstellung eines Einfamilienhauses für Home Assistant, mit Etagen,
 - Energiefluss: PV-Module auf dem Dach, Wärmepumpe und Wallbox mit Live-Werten
 - Haus wird automatisch mittig ausgerichtet und lässt sich jederzeit verschieben
 - Menü links zum Aufklappen, ab Werk geschlossen
+- Einstellungen im Menü bleiben für deinen Benutzer gespeichert, auf allen Geräten
 - Karte nutzt die volle sichtbare Höhe, in der Panel-Ansicht die ganze Fläche
 - Vollständiger visueller Editor mit großem Raumeditor im Vollbild
 
@@ -76,7 +77,15 @@ Solange weder verschoben noch gezoomt wurde, richtet sich das Haus bei jeder Gr�
 | Beides | nach Temperatur | beide Werte |
 | Schwankung | nach Spanne | Spanne in Kelvin |
 
-Welche Anzeige beim Öffnen gilt, legst du im Editor fest. Im Menü lässt sie sich jederzeit umschalten.
+Welche Anzeige gilt, solange du im Menü nichts gewählt hast, legst du im Editor fest. Im Menü lässt sie sich jederzeit umschalten, die Wahl bleibt gespeichert.
+
+## Einstellungen im Menü
+
+Was du im Menü einstellst, merkt sich die Karte für deinen Benutzer in Home Assistant: Darstellung, Anzeige, die Schalter unter Ansicht, „Etagen auseinander“ und die Transparenz. Beim nächsten Öffnen ist alles wieder so, auch auf einem anderen Gerät mit demselben Benutzer. Drehung und Zoom merkt sich die Karte nicht.
+
+- Änderst du im Editor „Darstellung beim Öffnen“ oder „Anzeige beim Öffnen“, oder in YAML `opacity`, gilt dafür wieder die Vorgabe aus dem Editor.
+- Karten mit gleichem Titel teilen sich die Einstellungen.
+- In der Vorschau des Karteneditors zeigt die Karte die Konfiguration. Dort und im Bearbeitungsmodus des Dashboards speichert sie nichts.
 
 ## Außentemperatur
 
@@ -117,7 +126,7 @@ Fehlt etwas, nennt die Leiste den Grund.
 
 ## Darstellungen
 
-Im Menü unter „Darstellung“ lässt sich jederzeit umschalten. Welche beim Öffnen gilt, legst du im Editor unter „Darstellung beim Öffnen“ fest.
+Im Menü unter „Darstellung“ lässt sich jederzeit umschalten, die Wahl bleibt gespeichert. Welche gilt, solange im Menü nichts gewählt wurde, legst du im Editor unter „Darstellung beim Öffnen“ fest.
 
 | Darstellung | Aussehen |
 |---|---|
@@ -363,6 +372,7 @@ Zahlen erscheinen im Format deiner Spracheinstellung in Home Assistant.
 ## Technische Hinweise
 
 - Three.js 0.160.0 wird zur Laufzeit von `unpkg.com` geladen, ersatzweise von `cdn.jsdelivr.net`. Ohne Internetzugang im Browser erscheint eine Fehlermeldung in der Karte.
+- Die Einstellungen im Menü speichert die Karte in den Benutzerdaten von Home Assistant über `frontend/set_user_data`, unter dem Schlüssel `house_3d_card`, bei einer Karte mit Titel `house_3d_card:Titel`.
 - Gezeichnet wird nur, wenn sich etwas ändert. Ausnahmen sind die Dauerdrehung, ein laufender Energiefluss und die Scanebene im Hologramm, diese mit etwa 25 Bildern pro Sekunde. Alles davon pausiert außerhalb des sichtbaren Bereichs.
 - Puppenhaus und Säulen berechnen Schatten, auch von Hecke und Bäumen. Auf sehr schwachen Geräten sind Wärmebild, Hologramm oder Klassisch sparsamer.
 - Mondstand und Mondphase folgen den Formeln von Astronomy Answers (aa.quae.nl), wie sie auch die Bibliothek SunCalc verwendet.
